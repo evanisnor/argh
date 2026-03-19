@@ -418,7 +418,7 @@ tasks:
 
   - id: 18
     title: Review Queue panel (internal/ui/panel_reviews.go)
-    status: pending
+    status: done
     depends_on: [14, 16]
     description: >
       Render the Review Queue panel. Read from DB. Columns:
