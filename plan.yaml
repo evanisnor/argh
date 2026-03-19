@@ -783,7 +783,7 @@ tasks:
 
   - id: 32
     title: Do Not Disturb mode (VISION.md §9.6)
-    status: pending
+    status: done
     depends_on: [3, 30, 14]
     description: >
       Implement DND as a runtime flag in the notifier. When active, suppress

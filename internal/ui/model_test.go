@@ -1198,3 +1198,143 @@ func TestView_HeaderShowsStatusText(t *testing.T) {
 		t.Errorf("View() header missing statusText, got:\n%s", view)
 	}
 }
+
+// ── stubDNDToggler ────────────────────────────────────────────────────────────
+
+type stubDNDToggler struct {
+	active      bool
+	toggleCount int
+}
+
+func (s *stubDNDToggler) Toggle() {
+	s.active = !s.active
+	s.toggleCount++
+}
+
+func (s *stubDNDToggler) IsDND() bool {
+	return s.active
+}
+
+// TestView_HeaderShowsDNDIndicator verifies "🔕 DND" appears in the header
+// when the dndToggler reports DND active.
+func TestView_HeaderShowsDNDIndicator(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	toggler := &stubDNDToggler{active: true}
+	m.dndToggler = toggler
+
+	view := m.View()
+	if !strings.Contains(view, "🔕 DND") {
+		t.Errorf("View() header should contain '🔕 DND' when DND is active, got:\n%s", view)
+	}
+}
+
+// TestView_HeaderNoDNDIndicatorWhenInactive verifies the DND indicator is
+// absent from the header when DND is inactive.
+func TestView_HeaderNoDNDIndicatorWhenInactive(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	toggler := &stubDNDToggler{active: false}
+	m.dndToggler = toggler
+
+	view := m.View()
+	if strings.Contains(view, "🔕 DND") {
+		t.Errorf("View() header should NOT contain '🔕 DND' when DND is inactive, got:\n%s", view)
+	}
+}
+
+// TestView_HeaderNoDNDIndicatorWhenTogglerNil verifies the DND indicator is
+// absent when no dndToggler is configured (nil).
+func TestView_HeaderNoDNDIndicatorWhenTogglerNil(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	// dndToggler is nil by default
+
+	view := m.View()
+	if strings.Contains(view, "🔕 DND") {
+		t.Errorf("View() header should NOT contain '🔕 DND' when dndToggler is nil, got:\n%s", view)
+	}
+}
+
+// TestToggleDNDMsg_CallsToggleOnDNDToggler verifies that receiving ToggleDNDMsg
+// calls Toggle() on the dndToggler.
+func TestToggleDNDMsg_CallsToggleOnDNDToggler(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	toggler := &stubDNDToggler{}
+	m.dndToggler = toggler
+
+	m = applyMsg(m, ToggleDNDMsg{})
+
+	if toggler.toggleCount != 1 {
+		t.Errorf("Toggle() should have been called once, called %d times", toggler.toggleCount)
+	}
+}
+
+// TestToggleDNDMsg_NilTogglerIsNoOp verifies that ToggleDNDMsg with nil
+// dndToggler does not panic.
+func TestToggleDNDMsg_NilTogglerIsNoOp(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	// dndToggler is nil — should not panic
+	m = applyMsg(m, ToggleDNDMsg{})
+	// reaching here means no panic
+}
+
+// TestToggleDNDMsg_TogglesHeaderIndicator verifies that after ToggleDNDMsg is
+// received, the DND indicator reflects the new state.
+func TestToggleDNDMsg_TogglesHeaderIndicator(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	toggler := &stubDNDToggler{active: false}
+	m.dndToggler = toggler
+
+	// Before toggle — no DND indicator.
+	if strings.Contains(m.View(), "🔕 DND") {
+		t.Error("DND indicator should be absent before toggle")
+	}
+
+	// Simulate pressing D (produces ToggleDNDMsg).
+	m = applyMsg(m, ToggleDNDMsg{})
+
+	// After toggle — indicator present.
+	if !strings.Contains(m.View(), "🔕 DND") {
+		t.Errorf("DND indicator should appear after toggle; got:\n%s", m.View())
+	}
+
+	// Toggle again — indicator gone.
+	m = applyMsg(m, ToggleDNDMsg{})
+	if strings.Contains(m.View(), "🔕 DND") {
+		t.Errorf("DND indicator should disappear after second toggle; got:\n%s", m.View())
+	}
+}

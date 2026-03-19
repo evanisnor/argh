@@ -60,6 +60,14 @@ type Subscriber interface {
 	Subscribe(handler func(eventbus.Event)) func()
 }
 
+// DNDToggler toggles and reports Do Not Disturb state.
+// The model calls Toggle() when the D key is pressed, and checks IsDND() when
+// rendering the header to show the "🔕 DND" indicator.
+type DNDToggler interface {
+	Toggle()
+	IsDND() bool
+}
+
 // SubModel is the interface that every panel and pane implements so the root
 // model can delegate Update and View calls uniformly.
 type SubModel interface {
@@ -131,6 +139,7 @@ type Model struct {
 	eventCh           chan eventbus.Event
 	unsubscribe       func()
 	theme             Theme
+	dndToggler        DNDToggler // optional; nil = no DND control
 }
 
 // New creates a root Model and subscribes to the event bus. Call Init() to
@@ -220,6 +229,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(ev)
+
+	case ToggleDNDMsg:
+		if m.dndToggler != nil {
+			m.dndToggler.Toggle()
+		}
+		return m, waitForDBEvent(m.eventCh)
 
 	default:
 		// Forward unrecognised messages to all sub-models.
@@ -499,7 +514,11 @@ func (m Model) headerView() string {
 		coloredText := lipgloss.NewStyle().Foreground(color).Render(m.statusText)
 		status = "  " + coloredText + " — " + formatTimeAgo(elapsed)
 	}
-	return m.theme.Header.Render(left + status + "  " + right)
+	dnd := ""
+	if m.dndToggler != nil && m.dndToggler.IsDND() {
+		dnd = "  🔕 DND"
+	}
+	return m.theme.Header.Render(left + status + dnd + "  " + right)
 }
 
 // panelView wraps a sub-model's View() in a titled border.
