@@ -6,6 +6,7 @@ For each task:
 3. Implement the task fully using the /golang skill, including tests as described in the task's `testing` field
 4. Set its status to done in plan.yaml
 5. Commit all changes to git with a message describing the task that was completed
-6. Stop — autoclaude will start a new session for the next task
+6. Push the commit to origin
+7. Stop — autoclaude will start a new session for the next task
 
 Do not skip tasks or work on multiple tasks at once. If a task has unmet dependencies (depends_on), check that those tasks are already done before starting.
