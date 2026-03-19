@@ -87,7 +87,7 @@ tasks:
 
   - id: 4
     title: SQLite schema and persistence layer (internal/persistence)
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Set up mattn/go-sqlite3. Design and migrate the schema covering:
