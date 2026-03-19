@@ -612,7 +612,7 @@ tasks:
 
   - id: 25
     title: Watch trigger parser
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Parse the trigger expression syntax from VISION.md §3.7:
