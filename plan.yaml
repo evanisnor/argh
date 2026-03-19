@@ -739,7 +739,7 @@ tasks:
 
   - id: 30
     title: macOS system notifications (internal/notify)
-    status: pending
+    status: done
     depends_on: [3, 5]
     description: >
       Implement macOS Notification Center dispatch using gen2brain/beeep or
