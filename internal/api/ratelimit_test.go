@@ -207,11 +207,12 @@ func TestRateLimitTracker_CurrentState_DefaultState(t *testing.T) {
 	tracker := NewRateLimitTracker(store, bus)
 
 	state := tracker.CurrentState()
-	if state.Limit != 5000 {
-		t.Errorf("default Limit: got %d, want 5000", state.Limit)
+	if state.Limit != githubRateLimit {
+		t.Errorf("default Limit: got %d, want %d", state.Limit, githubRateLimit)
 	}
-	if state.Remaining != 0 {
-		t.Errorf("default Remaining: got %d, want 0", state.Remaining)
+	// Initialised to full quota so polling starts immediately on first launch.
+	if state.Remaining != githubRateLimit {
+		t.Errorf("default Remaining: got %d, want %d", state.Remaining, githubRateLimit)
 	}
 }
 
@@ -283,9 +284,9 @@ func TestRateLimitTracker_StatusBar_DefaultBeforeAnyTrack(t *testing.T) {
 	bus := &StubPublisher{}
 	tracker := NewRateLimitTracker(store, bus)
 
-	// Before any TrackResponse call: Remaining=0, Limit=5000 → ○○○○
+	// Before any TrackResponse call: Remaining=githubRateLimit, Limit=5000 → ●●●●
 	got := tracker.StatusBar()
-	want := "API ○○○○ 0/5,000"
+	want := "API ●●●● 5,000/5,000"
 	if got != want {
 		t.Errorf("StatusBar() = %q, want %q", got, want)
 	}

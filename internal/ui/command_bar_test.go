@@ -829,3 +829,57 @@ func TestCommandBar_ReviewSuggestionsMsg_EmptySuggestions(t *testing.T) {
 		t.Errorf("expected empty collaborators, got %v", cb.collaborators)
 	}
 }
+
+// ── SetExecutor / executor dispatch ───────────────────────────────────────────
+
+type stubDispatcher struct {
+	called bool
+	cmd    string
+	args   []string
+}
+
+func (s *stubDispatcher) Execute(cmd string, args []string) tea.Cmd {
+	s.called = true
+	s.cmd = cmd
+	s.args = args
+	return nil
+}
+
+func TestCommandBar_SetExecutor_DispatchesOnEnter(t *testing.T) {
+	cb := NewCommandBar()
+	disp := &stubDispatcher{}
+	cb.SetExecutor(disp)
+
+	focusBar(t, cb)
+	typeInto(t, cb, ":reload")
+	pressKey(t, cb, "enter")
+
+	if !disp.called {
+		t.Fatal("expected executor.Execute to be called")
+	}
+	if disp.cmd != ":reload" {
+		t.Errorf("cmd: got %q, want %q", disp.cmd, ":reload")
+	}
+}
+
+func TestCommandBar_SetExecutor_NoDispatch_WhenEmpty(t *testing.T) {
+	cb := NewCommandBar()
+	disp := &stubDispatcher{}
+	cb.SetExecutor(disp)
+
+	focusBar(t, cb)
+	// Press enter with empty input — should not call executor.
+	pressKey(t, cb, "enter")
+
+	if disp.called {
+		t.Error("expected executor.Execute NOT to be called on empty input")
+	}
+}
+
+func TestCommandBar_NoExecutor_EnterDoesNotPanic(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	typeInto(t, cb, ":reload")
+	// No executor set — must not panic.
+	pressKey(t, cb, "enter")
+}

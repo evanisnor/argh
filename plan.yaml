@@ -946,6 +946,25 @@ tasks:
     testing: >
       Run `brew audit --strict` against the formula. No unit tests required.
 
+  - id: 41
+    title: Wire up main() — full application launch
+    status: done
+    depends_on: [14, 12, 30, 28, 24, 23, 27, 33]
+    description: >
+      Replace the version-printing stub in main.go with a full application launch:
+      authenticate via gh CLI, open the SQLite DB, create the event bus, wire up
+      the poller, DND manager, system notifier, watch engine, UI panels, and Bubble
+      Tea root model. Also: add ForcePoll() to Poller, WithDNDToggler() to Model,
+      Defaults() to config, wire the CommandExecutor into the CommandBar, and handle
+      CommandResultMsg/CommandComposeMsg in the root model.
+    references:
+      - "ARCHITECTURE.md — wiring diagram"
+    testing: >
+      Inject tuiDeps stubs to exercise every error branch (auth failure, config
+      failure, DB open failure, audit log path failure) and the happy path. Add
+      tests for ForcePoll(), WithDNDToggler(), Defaults(), command bar executor
+      dispatch on Enter, and model handling of CommandResultMsg and CommandComposeMsg.
+
   - id: 39
     title: Brewfile
     status: done

@@ -52,12 +52,14 @@ type RateLimitTracker struct {
 	state RateLimitState
 }
 
-// NewRateLimitTracker returns a new RateLimitTracker.
+// NewRateLimitTracker returns a new RateLimitTracker. It initialises Remaining
+// to the full GitHub quota so the poller starts fetching immediately rather
+// than waiting for the first TrackResponse call.
 func NewRateLimitTracker(store RateLimitStore, bus Publisher) *RateLimitTracker {
 	return &RateLimitTracker{
 		store: store,
 		bus:   bus,
-		state: RateLimitState{Limit: githubRateLimit},
+		state: RateLimitState{Remaining: githubRateLimit, Limit: githubRateLimit},
 	}
 }
 

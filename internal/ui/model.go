@@ -207,6 +207,14 @@ func NewWithTheme(version, username string, sub Subscriber,
 	}
 }
 
+// WithDNDToggler returns a copy of m with the DND toggler set to t. The header
+// shows the "🔕 DND" indicator when the toggler reports DND active, and the D
+// key binding calls Toggle().
+func (m Model) WithDNDToggler(t DNDToggler) Model {
+	m.dndToggler = t
+	return m
+}
+
 // waitForDBEvent returns a Cmd that blocks until the next event arrives on ch,
 // then wraps it in a DBEventMsg.
 func waitForDBEvent(ch <-chan eventbus.Event) tea.Cmd {
@@ -229,6 +237,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(ev)
+
+	case CommandResultMsg:
+		if ev.Err != nil {
+			m.statusText = "error: " + ev.Err.Error()
+		} else {
+			m.statusText = ev.Status
+		}
+		m.statusEventType = eventbus.PRUpdated // use neutral colour
+		m.lastEventTime = m.clock.Now()
+		m.commandBarFocused = false
+		var cmd tea.Cmd
+		m.commandBar, cmd = m.commandBar.Update(BlurCommandBarMsg{})
+		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+
+	case CommandComposeMsg:
+		m.statusText = ev.Prompt
+		m.statusEventType = eventbus.PRUpdated
+		m.lastEventTime = m.clock.Now()
+		return m, waitForDBEvent(m.eventCh)
 
 	case ShowHelpMsg:
 		m.helpVisible = true
@@ -406,6 +433,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focused = (m.focused + 1) % 3
 
 	case "enter", "p":
+		if m.commandBarFocused {
+			var cmd tea.Cmd
+			m.commandBar, cmd = m.commandBar.Update(msg)
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
 		m.detailOpen = !m.detailOpen
 
 	case "n", "N":

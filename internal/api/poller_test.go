@@ -478,6 +478,15 @@ func TestPoller_SleepSchedule_FetchStillCalled_WhenInSleepWindow(t *testing.T) {
 	}
 }
 
+func TestPoller_ForcePoll_DoesNotBlock(t *testing.T) {
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), NewStubRateLimitReader(5000), time.Second,
+		func(d time.Duration) Ticker { return NewFakeTicker(d) })
+
+	// ForcePoll twice without a consumer on the channel — must not block.
+	p.ForcePoll()
+	p.ForcePoll()
+}
+
 func TestPoller_Wake_NilSleepChecker(t *testing.T) {
 	p := NewPoller(NewStubFetcher(), NewStubFetcher(), NewStubRateLimitReader(5000), time.Second,
 		func(d time.Duration) Ticker { return NewFakeTicker(d) })

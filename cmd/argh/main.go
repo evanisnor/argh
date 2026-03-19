@@ -1,14 +1,32 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"runtime"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/google/go-github/v69/github"
+	"github.com/shurcooL/githubv4"
+	"golang.org/x/oauth2"
+
+	"github.com/evanisnor/argh/internal/api"
+	"github.com/evanisnor/argh/internal/audit"
+	"github.com/evanisnor/argh/internal/config"
+	"github.com/evanisnor/argh/internal/diff"
+	"github.com/evanisnor/argh/internal/eventbus"
+	"github.com/evanisnor/argh/internal/notify"
 	"github.com/evanisnor/argh/internal/persistence"
 	"github.com/evanisnor/argh/internal/status"
+	"github.com/evanisnor/argh/internal/suggest"
+	"github.com/evanisnor/argh/internal/ui"
+	"github.com/evanisnor/argh/internal/watches"
 )
 
 // Version is set at build time via ldflags.
@@ -16,6 +34,23 @@ var Version = "dev"
 
 // osExit is a variable so tests can intercept os.Exit calls.
 var osExit = os.Exit
+
+// tuiLauncher is the function that starts the full TUI application.
+// It is a variable so tests can replace it without requiring GitHub authentication.
+var tuiLauncher = func(ctx context.Context, version string) error {
+	return runTUI(ctx, version, productionDeps())
+}
+
+// teaRun creates and runs the Bubble Tea program. It is a variable so tests can
+// override it without needing a real terminal.
+var teaRun = func(m tea.Model) error {
+	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	return err
+}
+
+// randRead is the function used to generate random bytes in newWatchID.
+// It is a variable so tests can inject a failing implementation.
+var randRead = rand.Read
 
 // checkPlatform returns an error if goos is not "darwin".
 // goos is accepted as a parameter so tests can inject values without
@@ -37,7 +72,7 @@ func hasArg(args []string, flag string) bool {
 	return false
 }
 
-func run(out io.Writer, errOut io.Writer, goos string, args []string) int {
+func run(ctx context.Context, out io.Writer, errOut io.Writer, goos string, args []string) int {
 	if err := checkPlatform(goos); err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
@@ -48,7 +83,10 @@ func run(out io.Writer, errOut io.Writer, goos string, args []string) int {
 				return persistence.Open(fs)
 			})
 	}
-	fmt.Fprintf(out, "argh %s\n", Version)
+	if err := tuiLauncher(ctx, Version); err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
 	return 0
 }
 
@@ -90,6 +128,182 @@ func runStatus(
 	return 0
 }
 
+// tuiDeps groups all injectable boundaries for runTUI so the full startup
+// sequence can be exercised in tests without real GitHub credentials or disk I/O.
+type tuiDeps struct {
+	authenticate func(ctx context.Context) (*api.Credentials, error)
+	loadConfig   func() (config.Config, error)
+	openDB       func() (*persistence.DB, error)
+	auditLogPath func() (string, error)
+	newTicker    api.NewTickerFunc // nil → api.NewRealTicker
+	runProgram   func(m tea.Model) error
+}
+
+// productionDeps returns a tuiDeps wired to real OS resources.
+func productionDeps() tuiDeps {
+	return tuiDeps{
+		authenticate: func(ctx context.Context) (*api.Credentials, error) {
+			return api.Authenticate(ctx, &api.OSCommandExecutor{})
+		},
+		loadConfig: func() (config.Config, error) {
+			return config.Load(config.OSFilesystem{})
+		},
+		openDB: func() (*persistence.DB, error) {
+			return persistence.Open(persistence.OSFilesystem{})
+		},
+		auditLogPath: audit.DefaultLogPath,
+		newTicker:    nil, // use api.NewRealTicker
+		runProgram:   teaRun,
+	}
+}
+
+// osBrowserOpener opens a URL using the macOS open(1) command.
+type osBrowserOpener struct{}
+
+func (o *osBrowserOpener) Open(url string) error {
+	return exec.Command("open", url).Run()
+}
+
+// newWatchID returns a random 16-hex-character string for use as a watch ID.
+func newWatchID() string {
+	b := make([]byte, 8)
+	if _, err := randRead(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+// runTUI wires all application components and starts the Bubble Tea program.
+func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+
+	creds, err := deps.authenticate(ctx)
+	if err != nil {
+		return fmt.Errorf("authentication: %w", err)
+	}
+
+	cfg, err := deps.loadConfig()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	db, err := deps.openDB()
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	auditPath, err := deps.auditLogPath()
+	if err != nil {
+		return fmt.Errorf("resolving audit log path: %w", err)
+	}
+
+	// ── Event bus ────────────────────────────────────────────────────────────
+
+	bus := eventbus.New()
+	defer bus.Shutdown()
+
+	// ── Audit logger ─────────────────────────────────────────────────────────
+
+	auditLogger := audit.New(auditPath)
+
+	// ── Rate limit tracker ───────────────────────────────────────────────────
+
+	rateLimitTracker := api.NewRateLimitTracker(db, bus)
+
+	// ── Authenticated GitHub clients ─────────────────────────────────────────
+
+	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: creds.Token})
+	httpClient := oauth2.NewClient(ctx, src)
+	gqlClient := githubv4.NewClient(httpClient)
+	restClient := github.NewClient(httpClient)
+
+	// ── Fetchers ─────────────────────────────────────────────────────────────
+
+	myPRsFetcher := api.NewMyPullRequestsFetcher(gqlClient, db, bus, creds.Login)
+	reviewFetcher := api.NewReviewQueueFetcher(gqlClient, db, bus, creds.Login)
+
+	// ── Poller ───────────────────────────────────────────────────────────────
+
+	newTicker := deps.newTicker
+	if newTicker == nil {
+		newTicker = api.NewRealTicker
+	}
+	poller := api.NewPoller(myPRsFetcher, reviewFetcher, rateLimitTracker,
+		cfg.PollInterval.Duration, newTicker)
+	if len(cfg.SleepSchedule.Windows) > 0 {
+		sleep := api.NewSleepSchedule(cfg.SleepSchedule.Windows,
+			cfg.SleepSchedule.PollInterval.Duration, api.RealClock{})
+		poller.SetSleepSchedule(sleep)
+	}
+
+	// ── Mutations ────────────────────────────────────────────────────────────
+
+	mutator := api.NewMutator(restClient.PullRequests, restClient.Issues, gqlClient, auditLogger)
+
+	// ── Do Not Disturb ───────────────────────────────────────────────────────
+
+	dnd := notify.NewDNDManager(cfg.DoNotDisturb.Schedule, notify.RealClock{})
+
+	// ── System notifications ─────────────────────────────────────────────────
+
+	debouncer := notify.NewDebouncer(notify.RealClock{})
+	sender := notify.NewBeeepSender()
+	notifier := notify.New(bus, sender, cfg.Notifications, dnd, creds.Login, debouncer)
+	defer notifier.Close()
+
+	// ── Watches ──────────────────────────────────────────────────────────────
+
+	watchManager := watches.NewManager(db, time.Now, newWatchID)
+	watchEngine := watches.NewEngine(db, db, mutator, sender, bus, auditLogger, time.Now)
+
+	// ── UI panels ────────────────────────────────────────────────────────────
+
+	myPRsPanel := ui.NewMyPRsPanel(db)
+	reviewQueuePanel := ui.NewReviewQueuePanel(db, creds.Login)
+	watchesPanel := ui.NewWatchesPanel(db)
+	detailPane := ui.NewDetailPane(mutator)
+	commandBar := ui.NewCommandBar()
+
+	// ── Command executor ─────────────────────────────────────────────────────
+
+	executor := ui.NewCommandExecutor(ui.CommandExecutorConfig{
+		Mutator:   mutator,
+		Store:     db,
+		Poll:      poller,
+		Browser:   &osBrowserOpener{},
+		Diff:      diff.New(creds.Token, diff.NewHTTPFetcher(httpClient), nil, nil),
+		DND:       dnd,
+		Watches:   watchManager,
+		Suggester: &suggest.Suggester{},
+	})
+	commandBar.SetExecutor(executor)
+
+	// ── Root model ───────────────────────────────────────────────────────────
+
+	model := ui.New(version, creds.Login, bus,
+		myPRsPanel, reviewQueuePanel, watchesPanel, detailPane, commandBar).
+		WithDNDToggler(dnd)
+
+	// ── Launch background goroutines ─────────────────────────────────────────
+
+	pollerDone := poller.Start(ctx)
+	go watchEngine.Run(ctx)
+
+	// ── Run the Bubble Tea program ───────────────────────────────────────────
+
+	programErr := deps.runProgram(model)
+
+	// Cancel context to stop goroutines, then wait for the poller to finish.
+	cancel()
+	<-pollerDone
+
+	return programErr
+}
+
 func main() {
-	osExit(run(os.Stdout, os.Stderr, runtime.GOOS, os.Args[1:]))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	osExit(run(ctx, os.Stdout, os.Stderr, runtime.GOOS, os.Args[1:]))
 }

@@ -97,6 +97,12 @@ func defaults() Config {
 	}
 }
 
+// Defaults returns a Config with all default values applied. Useful in tests
+// and for bootstrapping when no config file is present.
+func Defaults() Config {
+	return defaults()
+}
+
 // Filesystem abstracts file I/O for testability.
 type Filesystem interface {
 	ReadFile(path string) ([]byte, error)

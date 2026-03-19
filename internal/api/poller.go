@@ -77,6 +77,16 @@ func (p *Poller) ForcePollCh() chan<- struct{} {
 	return p.forcePoll
 }
 
+// ForcePoll triggers an immediate poll. It is safe to call from any goroutine.
+// If the force-poll channel is already full, the call is a no-op (the pending
+// force-poll will still fire).
+func (p *Poller) ForcePoll() {
+	select {
+	case p.forcePoll <- struct{}{}:
+	default:
+	}
+}
+
 // SetSleepSchedule configures an optional sleep schedule. Must be called
 // before Start.
 func (p *Poller) SetSleepSchedule(checker SleepScheduleChecker) {

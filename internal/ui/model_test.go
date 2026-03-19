@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1336,6 +1337,126 @@ func TestToggleDNDMsg_TogglesHeaderIndicator(t *testing.T) {
 	m = applyMsg(m, ToggleDNDMsg{})
 	if strings.Contains(m.View(), "🔕 DND") {
 		t.Errorf("DND indicator should disappear after second toggle; got:\n%s", m.View())
+	}
+}
+
+// ── ReviewSuggestionsMsg ──────────────────────────────────────────────────────
+
+// ── WithDNDToggler ────────────────────────────────────────────────────────────
+
+func TestModel_WithDNDToggler_SetsToggler(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	toggler := &stubDNDToggler{}
+	m2 := m.WithDNDToggler(toggler)
+	if m2.dndToggler != toggler {
+		t.Error("WithDNDToggler: dndToggler not set on returned model")
+	}
+	// Original model must not be mutated.
+	if m.dndToggler != nil {
+		t.Error("WithDNDToggler: original model dndToggler should remain nil")
+	}
+}
+
+// ── CommandResultMsg ──────────────────────────────────────────────────────────
+
+func TestModel_CommandResultMsg_SetsStatusAndBlurs(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m.commandBarFocused = true
+
+	m = applyMsg(m, CommandResultMsg{Status: "ok"})
+
+	if m.statusText != "ok" {
+		t.Errorf("statusText: got %q, want %q", m.statusText, "ok")
+	}
+	if m.commandBarFocused {
+		t.Error("commandBarFocused should be false after CommandResultMsg")
+	}
+}
+
+func TestModel_CommandResultMsg_ErrorPath(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m = applyMsg(m, CommandResultMsg{Err: fmt.Errorf("boom")})
+	if m.statusText != "error: boom" {
+		t.Errorf("statusText: got %q, want %q", m.statusText, "error: boom")
+	}
+}
+
+// ── CommandComposeMsg ─────────────────────────────────────────────────────────
+
+func TestModel_CommandComposeMsg_SetsPrompt(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m = applyMsg(m, CommandComposeMsg{Prompt: "enter comment:"})
+	if m.statusText != "enter comment:" {
+		t.Errorf("statusText: got %q, want %q", m.statusText, "enter comment:")
+	}
+}
+
+// ── enter key when command bar focused ───────────────────────────────────────
+
+func TestModel_Enter_WhenCommandBarFocused_ForwardsToCommandBar(t *testing.T) {
+	cmdBar := newStub("cmdBar", false)
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cmdBar,
+	)
+	m.commandBarFocused = true
+	wasOpen := m.detailOpen
+
+	enterMsg := tea.KeyMsg{Type: tea.KeyEnter}
+	m = applyMsg(m, enterMsg)
+
+	// Detail pane must NOT have been toggled.
+	if m.detailOpen != wasOpen {
+		t.Error("enter when command bar focused must not toggle detailOpen")
+	}
+	// The command bar stub should have received the enter key.
+	if _, ok := cmdBar.lastMsg.(tea.KeyMsg); !ok {
+		t.Errorf("command bar did not receive KeyMsg; lastMsg = %T", cmdBar.lastMsg)
+	}
+}
+
+func TestModel_Enter_WhenCommandBarNotFocused_TogglesDetail(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m.commandBarFocused = false
+	before := m.detailOpen
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.detailOpen == before {
+		t.Error("enter when command bar not focused should toggle detailOpen")
 	}
 }
 

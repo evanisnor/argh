@@ -350,3 +350,24 @@ func TestOSFilesystem_MkdirAllAndReadFile(t *testing.T) {
 		t.Errorf("ReadFile missing: got %v, want ErrNotExist", err)
 	}
 }
+
+// ── Defaults ──────────────────────────────────────────────────────────────────
+
+func TestConfig_Defaults(t *testing.T) {
+	cfg := config.Defaults()
+	if cfg.PollInterval.Duration <= 0 {
+		t.Errorf("Defaults().PollInterval: got %v, want > 0", cfg.PollInterval.Duration)
+	}
+	if !cfg.Notifications.CIPass {
+		t.Error("Defaults().Notifications.CIPass: want true")
+	}
+	if !cfg.Notifications.CIFail {
+		t.Error("Defaults().Notifications.CIFail: want true")
+	}
+	if !cfg.Notifications.Approved {
+		t.Error("Defaults().Notifications.Approved: want true")
+	}
+	if !cfg.Notifications.Merged {
+		t.Error("Defaults().Notifications.Merged: want true")
+	}
+}

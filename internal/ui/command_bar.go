@@ -60,6 +60,12 @@ type PRRef struct {
 	URL       string
 }
 
+// CommandDispatcher parses and executes command-bar input, returning a
+// Bubble Tea command that carries the result back to the model.
+type CommandDispatcher interface {
+	Execute(cmd string, args []string) tea.Cmd
+}
+
 // CommandBar is the persistent input bar pinned to the bottom of the TUI.
 // It supports fuzzy command autocomplete, PR reference completion, and
 // collaborator completion for :request.
@@ -75,6 +81,13 @@ type CommandBar struct {
 	collaborators []string
 	mode          cbMode
 	hint          string
+	executor      CommandDispatcher // nil = commands not yet wired
+}
+
+// SetExecutor wires a CommandDispatcher into the bar so that pressing Enter
+// while the bar is focused dispatches the typed command.
+func (c *CommandBar) SetExecutor(e CommandDispatcher) {
+	c.executor = e
 }
 
 // NewCommandBar creates a new CommandBar.
@@ -185,7 +198,14 @@ func (c *CommandBar) handleKey(msg tea.KeyMsg) (SubModel, tea.Cmd) {
 		return c, nil
 
 	case "enter":
+		val := c.input.Value()
 		c.commitToHistory()
+		c.input.SetValue("")
+		c.refreshSuggestions()
+		if c.executor != nil && val != "" {
+			cmd, args := ParseCommand(val)
+			return c, c.executor.Execute(cmd, args)
+		}
 		return c, nil
 	}
 
