@@ -36,6 +36,13 @@ func (f *fakeFilesystem) UserDataDir() (string, error) {
 	return f.dir, nil
 }
 
+func (f *fakeFilesystem) Stat(path string) (os.FileInfo, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return os.Stat(path)
+}
+
 // ── OSFilesystem (real OS delegation) ────────────────────────────────────────
 
 func TestOSFilesystem_MkdirAll(t *testing.T) {
@@ -91,6 +98,7 @@ type errFilesystem struct {
 	dir        string
 	mkdirError error
 	dataDirErr error
+	statError  error
 }
 
 func (f *errFilesystem) MkdirAll(path string, perm os.FileMode) error {
@@ -105,6 +113,13 @@ func (f *errFilesystem) UserDataDir() (string, error) {
 		return "", f.dataDirErr
 	}
 	return f.dir, nil
+}
+
+func (f *errFilesystem) Stat(path string) (os.FileInfo, error) {
+	if f.statError != nil {
+		return nil, f.statError
+	}
+	return os.Stat(path)
 }
 
 // ── Open / migrate ────────────────────────────────────────────────────────────
@@ -1027,5 +1042,173 @@ func TestETag_UpdateExisting(t *testing.T) {
 	}
 	if got.ETag != `"new"` {
 		t.Errorf("ETag not updated: got %q", got.ETag)
+	}
+}
+
+// ── DBPath ────────────────────────────────────────────────────────────────────
+
+func TestDBPath_ReturnsExpectedPath(t *testing.T) {
+	fs := newTempFilesystem(t)
+	path, err := DBPath(fs)
+	if err != nil {
+		t.Fatalf("DBPath() error: %v", err)
+	}
+	expected := filepath.Join(fs.dir, dataDirName, dbFileName)
+	if path != expected {
+		t.Errorf("DBPath() = %q, want %q", path, expected)
+	}
+}
+
+func TestDBPath_UserDataDirError(t *testing.T) {
+	fs := &errFilesystem{dataDirErr: errors.New("no home dir")}
+	_, err := DBPath(fs)
+	if err == nil {
+		t.Fatal("expected error when UserDataDir fails")
+	}
+}
+
+// ── OSFilesystem.Stat ─────────────────────────────────────────────────────────
+
+func TestOSFilesystem_Stat_ExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "test-*.db")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	f.Close()
+
+	fs := OSFilesystem{}
+	info, err := fs.Stat(f.Name())
+	if err != nil {
+		t.Fatalf("Stat() error: %v", err)
+	}
+	if info == nil {
+		t.Error("Stat() returned nil FileInfo")
+	}
+}
+
+func TestOSFilesystem_Stat_NotExist(t *testing.T) {
+	fs := OSFilesystem{}
+	_, err := fs.Stat(filepath.Join(t.TempDir(), "nonexistent.db"))
+	if !os.IsNotExist(err) {
+		t.Errorf("Stat() error = %v, want IsNotExist", err)
+	}
+}
+
+// ── CountPRsWithPendingReview ─────────────────────────────────────────────────
+
+func TestCountPRsWithPendingReview_NoPRs(t *testing.T) {
+	db := openTestDB(t)
+	count, err := db.CountPRsWithPendingReview()
+	if err != nil {
+		t.Fatalf("CountPRsWithPendingReview() error: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0", count)
+	}
+}
+
+func TestCountPRsWithPendingReview_CountsPending(t *testing.T) {
+	db := openTestDB(t)
+
+	// PR 1: two pending reviewers.
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-1", Login: "alice", State: "PENDING"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-1", Login: "bob", State: "PENDING"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+	// PR 2: one pending reviewer.
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-2", Login: "carol", State: "PENDING"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+	// PR 3: approved reviewer only — should not count.
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-3", Login: "dave", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+
+	count, err := db.CountPRsWithPendingReview()
+	if err != nil {
+		t.Fatalf("CountPRsWithPendingReview() error: %v", err)
+	}
+	// pr-1 and pr-2 have PENDING reviewers; pr-1 has two but counts once.
+	if count != 2 {
+		t.Errorf("count = %d, want 2", count)
+	}
+}
+
+func TestCountPRsWithPendingReview_ClosedDB(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, err := db.CountPRsWithPendingReview()
+	if err == nil {
+		t.Error("expected error with closed DB")
+	}
+}
+
+// ── MaxLastActivityAt ─────────────────────────────────────────────────────────
+
+func TestMaxLastActivityAt_NoPRs(t *testing.T) {
+	db := openTestDB(t)
+	_, hasData, err := db.MaxLastActivityAt()
+	if err != nil {
+		t.Fatalf("MaxLastActivityAt() error: %v", err)
+	}
+	if hasData {
+		t.Error("hasData = true, want false when no PRs")
+	}
+}
+
+func TestMaxLastActivityAt_ReturnsMostRecent(t *testing.T) {
+	db := openTestDB(t)
+
+	older := makeTime("2024-01-01T00:00:00Z")
+	newer := makeTime("2024-06-01T12:00:00Z")
+
+	upsertPR := func(id string, lastActivity time.Time) {
+		t.Helper()
+		if err := db.UpsertPullRequest(PullRequest{
+			ID: id, Repo: "r/r", Number: 1, Title: "t", Status: "open",
+			CIState: "passing", Author: "me",
+			CreatedAt: older, UpdatedAt: older, LastActivityAt: lastActivity,
+			URL: "https://github.com/r/r/pull/1", GlobalID: id,
+		}); err != nil {
+			t.Fatalf("UpsertPullRequest: %v", err)
+		}
+	}
+
+	// Only one PR: use newer timestamp.
+	upsertPR("pr-1", newer)
+	// Second call upserts same row with older time; should still return newer.
+	upsertPR("pr-1", older)
+
+	// Insert a second PR with the newer timestamp.
+	if err := db.UpsertPullRequest(PullRequest{
+		ID: "pr-2", Repo: "r/r", Number: 2, Title: "t2", Status: "open",
+		CIState: "passing", Author: "me",
+		CreatedAt: older, UpdatedAt: older, LastActivityAt: newer,
+		URL: "https://github.com/r/r/pull/2", GlobalID: "pr-2",
+	}); err != nil {
+		t.Fatalf("UpsertPullRequest pr-2: %v", err)
+	}
+
+	maxTime, hasData, err := db.MaxLastActivityAt()
+	if err != nil {
+		t.Fatalf("MaxLastActivityAt() error: %v", err)
+	}
+	if !hasData {
+		t.Fatal("hasData = false, want true")
+	}
+	if !maxTime.UTC().Equal(newer.UTC()) {
+		t.Errorf("maxTime = %v, want %v", maxTime, newer)
+	}
+}
+
+func TestMaxLastActivityAt_ClosedDB(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, _, err := db.MaxLastActivityAt()
+	if err == nil {
+		t.Error("expected error with closed DB")
 	}
 }

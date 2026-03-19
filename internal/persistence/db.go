@@ -26,12 +26,14 @@ const (
 type Filesystem interface {
 	MkdirAll(path string, perm os.FileMode) error
 	UserDataDir() (string, error)
+	Stat(path string) (os.FileInfo, error)
 }
 
 // OSFilesystem implements Filesystem using the real OS.
 type OSFilesystem struct{}
 
 func (OSFilesystem) MkdirAll(path string, perm os.FileMode) error { return os.MkdirAll(path, perm) }
+func (OSFilesystem) Stat(path string) (os.FileInfo, error)        { return os.Stat(path) }
 
 // UserDataDir returns ~/.local/share on macOS (XDG convention) falling back
 // to ~/Library/Application Support when $XDG_DATA_HOME is not set.
@@ -652,6 +654,35 @@ func (d *DB) GetETag(url string) (ETag, error) {
 	return e, nil
 }
 
+// ── Status Queries ────────────────────────────────────────────────────────────
+
+// CountPRsWithPendingReview returns the number of distinct PRs that have at
+// least one reviewer in PENDING state.
+func (d *DB) CountPRsWithPendingReview() (int, error) {
+	var count int
+	err := d.db.QueryRow(
+		`SELECT COUNT(DISTINCT pr_id) FROM reviewers WHERE state = 'PENDING'`,
+	).Scan(&count)
+	return count, err
+}
+
+// MaxLastActivityAt returns the most recent last_activity_at across all PRs
+// and whether any rows exist. Uses ORDER BY + LIMIT to avoid aggregate type
+// conversion issues with the SQLite driver.
+func (d *DB) MaxLastActivityAt() (time.Time, bool, error) {
+	var t time.Time
+	err := d.db.QueryRow(
+		`SELECT last_activity_at FROM pull_requests ORDER BY last_activity_at DESC LIMIT 1`,
+	).Scan(&t)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return t, true, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 func boolToInt(b bool) int {
@@ -659,6 +690,15 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// DBPath returns the full path to the argh.db file for the given filesystem.
+func DBPath(fs Filesystem) (string, error) {
+	dir, err := dataDirPath(fs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, dbFileName), nil
 }
 
 func dataDirPath(fs Filesystem) (string, error) {

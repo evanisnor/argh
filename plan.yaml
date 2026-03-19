@@ -808,7 +808,7 @@ tasks:
 
   - id: 33
     title: "argh --status: tmux/prompt status bar mode"
-    status: pending
+    status: done
     depends_on: [4]
     description: >
       Add a --status CLI flag. When passed, read the current PR state from the
