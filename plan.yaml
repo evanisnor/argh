@@ -948,7 +948,7 @@ tasks:
 
   - id: 39
     title: Brewfile
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Create Brewfile at the repo root declaring runtime dependencies:
