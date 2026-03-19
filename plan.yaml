@@ -390,7 +390,7 @@ tasks:
 
   - id: 17
     title: My Pull Requests panel (internal/ui/panel_prs.go)
-    status: pending
+    status: done
     depends_on: [14, 16]
     description: >
       Render the My Pull Requests panel. Read PR rows from the DB. Columns:
