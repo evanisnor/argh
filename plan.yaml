@@ -872,7 +872,7 @@ tasks:
 
   - id: 40
     title: Help overlay (internal/ui/overlay_help.go)
-    status: pending
+    status: done
     depends_on: [14]
     description: >
       Implement a full-screen overlay showing all available commands and keyboard

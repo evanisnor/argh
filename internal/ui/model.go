@@ -230,6 +230,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 
+	case ShowHelpMsg:
+		m.helpVisible = true
+		return m, waitForDBEvent(m.eventCh)
+
 	case ToggleDNDMsg:
 		if m.dndToggler != nil {
 			m.dndToggler.Toggle()
@@ -491,6 +495,9 @@ func (m Model) dispatchToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 //   - Watches panel (omitted when it has no content)
 //   - Detail pane (omitted when detailOpen is false)
 //   - Command bar
+//
+// When helpVisible is true the normal layout is dimmed and the help overlay is
+// rendered on top.
 func (m Model) View() string {
 	sections := []string{
 		m.headerView(),
@@ -508,7 +515,16 @@ func (m Model) View() string {
 
 	sections = append(sections, m.commandBarView())
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	normal := lipgloss.JoinVertical(lipgloss.Left, sections...)
+
+	if m.helpVisible {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			dimBackground(normal),
+			renderHelpOverlay(m.theme),
+		)
+	}
+
+	return normal
 }
 
 // headerView renders the top status bar.

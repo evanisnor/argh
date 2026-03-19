@@ -64,11 +64,6 @@ type WatchEngine interface {
 	CancelWatch(id string) error
 }
 
-// HelpOverlay shows the help overlay (task 40 — stub for now).
-type HelpOverlay interface {
-	Show()
-}
-
 // ReviewSuggester suggests reviewers for a pull request when no explicit
 // @users are provided to the :request command.
 type ReviewSuggester interface {
@@ -116,7 +111,6 @@ type CommandExecutor struct {
 	diff      DiffViewer
 	dnd       DNDController
 	watches   WatchEngine
-	help      HelpOverlay
 	suggester ReviewSuggester
 }
 
@@ -129,7 +123,6 @@ type CommandExecutorConfig struct {
 	Diff      DiffViewer
 	DND       DNDController
 	Watches   WatchEngine
-	Help      HelpOverlay
 	Suggester ReviewSuggester
 }
 
@@ -143,7 +136,6 @@ func NewCommandExecutor(cfg CommandExecutorConfig) *CommandExecutor {
 		diff:      cfg.Diff,
 		dnd:       cfg.DND,
 		watches:   cfg.Watches,
-		help:      cfg.Help,
 		suggester: cfg.Suggester,
 	}
 }
@@ -180,10 +172,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 
 	case ":help":
 		return func() tea.Msg {
-			if e.help != nil {
-				e.help.Show()
-			}
-			return CommandResultMsg{Status: "help"}
+			return ShowHelpMsg{}
 		}
 
 	case ":open":

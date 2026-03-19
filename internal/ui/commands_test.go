@@ -182,11 +182,6 @@ func (f *fakeWatchEngine) CancelWatch(id string) error {
 	return f.cancelWatchErr
 }
 
-// fakeHelpOverlay records Show calls.
-type fakeHelpOverlay struct{ called bool }
-
-func (f *fakeHelpOverlay) Show() { f.called = true }
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // samplePR returns a deterministic PullRequest for tests.
@@ -233,7 +228,6 @@ func newExec(mut *fakePRMutator, store *fakePRStore) *CommandExecutor {
 		Diff:    &fakeDiffViewer{},
 		DND:     &fakeDNDController{},
 		Watches: &fakeWatchEngine{},
-		Help:    &fakeHelpOverlay{},
 	})
 }
 
@@ -487,24 +481,11 @@ func TestExecute_DND_NilDND(t *testing.T) {
 // ── :help ─────────────────────────────────────────────────────────────────────
 
 func TestExecute_Help(t *testing.T) {
-	overlay := &fakeHelpOverlay{}
-	exec := NewCommandExecutor(CommandExecutorConfig{Help: overlay, Store: &fakePRStore{}})
-	msg := runCmd(t, exec.Execute(":help", nil))
-	if _, ok := msg.(CommandResultMsg); !ok {
-		t.Fatalf("expected CommandResultMsg, got %T", msg)
-	}
-	if !overlay.called {
-		t.Error("HelpOverlay.Show should have been called")
-	}
-}
-
-func TestExecute_Help_NilOverlay(t *testing.T) {
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: &fakePRStore{}})
 	msg := runCmd(t, exec.Execute(":help", nil))
-	if _, ok := msg.(CommandResultMsg); !ok {
-		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	if _, ok := msg.(ShowHelpMsg); !ok {
+		t.Fatalf("expected ShowHelpMsg, got %T", msg)
 	}
-	// Should not panic with nil overlay.
 }
 
 // ── :open ─────────────────────────────────────────────────────────────────────
