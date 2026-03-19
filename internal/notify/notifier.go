@@ -35,9 +35,10 @@ type Bus interface {
 // notifications. Each instance holds one bus subscription; call Close
 // to unsubscribe.
 type Notifier struct {
-	sender Sender
-	cfg    config.NotificationsConfig
-	dnd    DNDChecker
+	sender    Sender
+	cfg       config.NotificationsConfig
+	dnd       DNDChecker
+	debouncer *Debouncer
 	// login is the authenticated user's GitHub login, used to distinguish
 	// "my PR" events from "review requested" events.
 	login string
@@ -45,15 +46,26 @@ type Notifier struct {
 }
 
 // New creates a Notifier, subscribes it to bus, and returns it.
-func New(bus Bus, sender Sender, cfg config.NotificationsConfig, dnd DNDChecker, login string) *Notifier {
+// Pass a non-nil Debouncer to enable notification deduplication and
+// CI-flapping collapse; pass nil to disable debouncing.
+func New(bus Bus, sender Sender, cfg config.NotificationsConfig, dnd DNDChecker, login string, debouncer *Debouncer) *Notifier {
 	n := &Notifier{
-		sender: sender,
-		cfg:    cfg,
-		dnd:    dnd,
-		login:  login,
+		sender:    sender,
+		cfg:       cfg,
+		dnd:       dnd,
+		debouncer: debouncer,
+		login:     login,
 	}
 	n.unsub = bus.Subscribe(n.handle)
 	return n
+}
+
+// send dispatches a notification unless the debouncer suppresses it.
+func (n *Notifier) send(prURL string, eventType eventbus.EventType, title, body string) {
+	if n.debouncer != nil && !n.debouncer.Allow(prURL, eventType) {
+		return
+	}
+	_ = n.sender.Notify(title, body)
 }
 
 // Close unsubscribes from the event bus.
@@ -101,7 +113,7 @@ func (n *Notifier) handleCIChanged(e eventbus.Event) {
 		if !n.cfg.CIPass {
 			return
 		}
-		_ = n.sender.Notify(
+		n.send(after.URL, e.Type,
 			fmt.Sprintf("✓ CI Passing — %s #%d", after.Repo, after.Number),
 			after.Title,
 		)
@@ -112,7 +124,7 @@ func (n *Notifier) handleCIChanged(e eventbus.Event) {
 		if !n.cfg.CIFail {
 			return
 		}
-		_ = n.sender.Notify(
+		n.send(after.URL, e.Type,
 			fmt.Sprintf("✗ CI Failing — %s #%d", after.Repo, after.Number),
 			after.Title,
 		)
@@ -136,7 +148,7 @@ func (n *Notifier) handleReviewChanged(e eventbus.Event) {
 		if !n.cfg.Approved {
 			return
 		}
-		_ = n.sender.Notify(
+		n.send(after.URL, e.Type,
 			fmt.Sprintf("✓ Approved — %s #%d", after.Repo, after.Number),
 			after.Title,
 		)
@@ -147,7 +159,7 @@ func (n *Notifier) handleReviewChanged(e eventbus.Event) {
 		if !n.cfg.ChangesRequested {
 			return
 		}
-		_ = n.sender.Notify(
+		n.send(after.URL, e.Type,
 			fmt.Sprintf("✗ Changes Requested — %s #%d", after.Repo, after.Number),
 			after.Title,
 		)
@@ -167,7 +179,7 @@ func (n *Notifier) handlePRUpdated(e eventbus.Event) {
 	// means a review was requested.
 	if !hasBefore {
 		if after.Author != n.login && n.cfg.ReviewRequested {
-			_ = n.sender.Notify(
+			n.send(after.URL, e.Type,
 				fmt.Sprintf("👀 Review Requested — %s #%d", after.Repo, after.Number),
 				after.Title,
 			)
@@ -182,28 +194,28 @@ func (n *Notifier) handlePRUpdated(e eventbus.Event) {
 	switch after.Status {
 	case "approved":
 		if n.cfg.Approved {
-			_ = n.sender.Notify(
+			n.send(after.URL, e.Type,
 				fmt.Sprintf("✓ Approved — %s #%d", after.Repo, after.Number),
 				after.Title,
 			)
 		}
 	case "changes requested":
 		if n.cfg.ChangesRequested {
-			_ = n.sender.Notify(
+			n.send(after.URL, e.Type,
 				fmt.Sprintf("✗ Changes Requested — %s #%d", after.Repo, after.Number),
 				after.Title,
 			)
 		}
 	case "merged":
 		if n.cfg.Merged {
-			_ = n.sender.Notify(
+			n.send(after.URL, e.Type,
 				fmt.Sprintf("✓ Merged — %s #%d", after.Repo, after.Number),
 				after.Title,
 			)
 		}
 	case "closed":
 		if n.cfg.Merged {
-			_ = n.sender.Notify(
+			n.send(after.URL, e.Type,
 				fmt.Sprintf("✗ Closed — %s #%d", after.Repo, after.Number),
 				after.Title,
 			)
@@ -220,7 +232,7 @@ func (n *Notifier) handleWatchFired(e eventbus.Event) {
 	if !ok {
 		return
 	}
-	_ = n.sender.Notify(
+	n.send(after.PRURL, e.Type,
 		fmt.Sprintf("⚡ Watch Fired — %s #%d", after.Repo, after.PRNumber),
 		fmt.Sprintf("Trigger: %s → Action: %s", after.TriggerExpr, after.ActionExpr),
 	)

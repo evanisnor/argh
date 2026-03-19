@@ -765,7 +765,7 @@ tasks:
 
   - id: 31
     title: Notification deduplication and debouncing
-    status: pending
+    status: done
     depends_on: [30]
     description: >
       Debounce notification dispatch with a 5-second window: if the same

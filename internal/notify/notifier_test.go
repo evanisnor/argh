@@ -73,7 +73,7 @@ func makePR(repo string, number int, status, ciState, author string) persistence
 }
 
 func makeNotifier(bus *fakeBus, sender *stubSender, cfg config.NotificationsConfig, dnd *stubDND) *Notifier {
-	return New(bus, sender, cfg, dnd, "testuser")
+	return New(bus, sender, cfg, dnd, "testuser", nil)
 }
 
 // ── CIChanged event tests ─────────────────────────────────────────────────────
