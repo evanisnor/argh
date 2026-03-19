@@ -58,7 +58,7 @@ tasks:
 
   - id: 3
     title: Config loading (internal/config)
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Implement config loading from ~/.config/argh/config.yaml using
