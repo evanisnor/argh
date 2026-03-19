@@ -532,7 +532,7 @@ tasks:
 
   - id: 22
     title: Implement all interactive commands
-    status: pending
+    status: done
     depends_on: [21, 9]
     description: >
       Wire up all commands listed in VISION.md §3.6. Each command resolves the
