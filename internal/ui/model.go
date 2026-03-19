@@ -299,6 +299,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", "p":
 		m.detailOpen = !m.detailOpen
 
+	case "n", "N":
+		if m.detailOpen {
+			var cmd tea.Cmd
+			m.detailPane, cmd = m.detailPane.Update(msg)
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
+
 	case "j", "down":
 		return m.dispatchToFocused(MoveFocusMsg{Down: true})
 

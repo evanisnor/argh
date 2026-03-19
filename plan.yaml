@@ -469,7 +469,7 @@ tasks:
 
   - id: 20
     title: Detail / Preview pane (internal/ui/panel_detail.go)
-    status: pending
+    status: done
     depends_on: [14]
     description: >
       Collapsible side or bottom pane for the focused PR. Toggled with Enter
