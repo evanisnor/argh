@@ -46,6 +46,7 @@ func TestBus_AllEventTypesDelivered(t *testing.T) {
 		eventbus.CIChanged,
 		eventbus.ReviewChanged,
 		eventbus.WatchFired,
+		eventbus.RateLimitWarning,
 	}
 
 	for _, et := range types {

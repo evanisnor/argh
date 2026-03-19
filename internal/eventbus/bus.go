@@ -20,6 +20,9 @@ const (
 
 	// WatchFired fires when a watch action executes.
 	WatchFired EventType = "WATCH_FIRED"
+
+	// RateLimitWarning fires when the GitHub API rate limit remaining drops below 100.
+	RateLimitWarning EventType = "RATE_LIMIT_WARNING"
 )
 
 // Event carries the type of change plus before/after snapshots of the
