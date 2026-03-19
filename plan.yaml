@@ -371,7 +371,7 @@ tasks:
 
   - id: 16
     title: Local session ID assignment
-    status: pending
+    status: done
     depends_on: [4, 14]
     description: >
       At startup and on each reload, assign alphabetic session IDs (a, b, c …
