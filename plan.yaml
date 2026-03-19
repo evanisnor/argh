@@ -141,7 +141,7 @@ tasks:
 
   - id: 6
     title: GitHub authentication via gh CLI (internal/api)
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Shell out to `gh auth token` to retrieve the current authenticated user's
