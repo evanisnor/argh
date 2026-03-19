@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
@@ -270,4 +272,97 @@ func NewStubAuditLogger() *StubAuditLogger {
 func (s *StubAuditLogger) Log(ctx context.Context, action, owner, repo string, number int, details string) error {
 	s.Entries = append(s.Entries, AuditEntry{Action: action, Owner: owner, Repo: repo, Number: number, Details: details})
 	return s.LogFunc(ctx, action, owner, repo, number, details)
+}
+
+// ── Poller stubs ──────────────────────────────────────────────────────────────
+
+// FakeTicker is a controllable Ticker for use in tests. It never fires
+// automatically; call Tick() to deliver a single tick to the channel.
+type FakeTicker struct {
+	ch      chan time.Time
+	mu      sync.Mutex
+	dur     time.Duration
+	ResetCh chan time.Duration // receives the duration passed to each Reset call
+}
+
+// NewFakeTicker returns a FakeTicker initialised with duration d.
+func NewFakeTicker(d time.Duration) *FakeTicker {
+	return &FakeTicker{
+		ch:      make(chan time.Time, 1),
+		dur:     d,
+		ResetCh: make(chan time.Duration, 10),
+	}
+}
+
+func (f *FakeTicker) C() <-chan time.Time { return f.ch }
+func (f *FakeTicker) Stop()               {}
+
+// Reset records the new duration (accessible via Duration()) and sends it to ResetCh.
+func (f *FakeTicker) Reset(d time.Duration) {
+	f.mu.Lock()
+	f.dur = d
+	f.mu.Unlock()
+	select {
+	case f.ResetCh <- d:
+	default:
+	}
+}
+
+// Duration returns the most recently set duration (thread-safe).
+func (f *FakeTicker) Duration() time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dur
+}
+
+// Tick delivers one tick to the channel (non-blocking; drops if already full).
+func (f *FakeTicker) Tick() {
+	select {
+	case f.ch <- time.Now():
+	default:
+	}
+}
+
+// StubRateLimitReader is a thread-safe test double for RateLimitReader.
+type StubRateLimitReader struct {
+	mu    sync.RWMutex
+	state RateLimitState
+}
+
+// NewStubRateLimitReader returns a StubRateLimitReader with the given remaining quota.
+func NewStubRateLimitReader(remaining int) *StubRateLimitReader {
+	return &StubRateLimitReader{state: RateLimitState{Remaining: remaining, Limit: githubRateLimit}}
+}
+
+// CurrentState returns the current state (thread-safe).
+func (s *StubRateLimitReader) CurrentState() RateLimitState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state
+}
+
+// SetRemaining updates the Remaining field (thread-safe).
+func (s *StubRateLimitReader) SetRemaining(remaining int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.Remaining = remaining
+}
+
+// StubFetcher is a test double for Fetcher.
+// FetchFunc is called by Fetch; it is set before the poller starts so there
+// is no write race on the field itself.
+type StubFetcher struct {
+	FetchFunc func(ctx context.Context) error
+}
+
+// NewStubFetcher returns a StubFetcher that succeeds by default.
+func NewStubFetcher() *StubFetcher {
+	return &StubFetcher{
+		FetchFunc: func(_ context.Context) error { return nil },
+	}
+}
+
+// Fetch delegates to FetchFunc.
+func (s *StubFetcher) Fetch(ctx context.Context) error {
+	return s.FetchFunc(ctx)
 }
