@@ -1338,3 +1338,34 @@ func TestToggleDNDMsg_TogglesHeaderIndicator(t *testing.T) {
 		t.Errorf("DND indicator should disappear after second toggle; got:\n%s", m.View())
 	}
 }
+
+// ── ReviewSuggestionsMsg ──────────────────────────────────────────────────────
+
+func TestModel_ReviewSuggestionsMsg_FocusesCommandBar(t *testing.T) {
+	cmdBar := newStub("cmdBar", false)
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cmdBar,
+	)
+
+	if m.commandBarFocused {
+		t.Error("commandBarFocused should be false before ReviewSuggestionsMsg")
+	}
+
+	msg := ReviewSuggestionsMsg{
+		Suggestions: []string{"alice", "bob"},
+		InputPrefix: ":request #42 @",
+	}
+	m = applyMsg(m, msg)
+
+	if !m.commandBarFocused {
+		t.Error("commandBarFocused should be true after ReviewSuggestionsMsg")
+	}
+	// Verify the message was forwarded to the command bar sub-model.
+	if _, ok := cmdBar.lastMsg.(ReviewSuggestionsMsg); !ok {
+		t.Errorf("command bar did not receive ReviewSuggestionsMsg; lastMsg = %T", cmdBar.lastMsg)
+	}
+}

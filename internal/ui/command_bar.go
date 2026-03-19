@@ -132,6 +132,18 @@ func (c *CommandBar) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 		c.hint = ""
 		return c, nil
 
+	case ReviewSuggestionsMsg:
+		// Pre-fill the input with the prefix and update suggestions so the user
+		// can select reviewers from the ranked list via @-completion.
+		c.collaborators = m.Suggestions
+		c.input.SetValue(m.InputPrefix)
+		c.focused = true
+		focusCmd := c.input.Focus()
+		c.histCursor = -1
+		c.savedInput = ""
+		c.refreshSuggestions()
+		return c, focusCmd
+
 	case tea.KeyMsg:
 		if !c.focused {
 			return c, nil

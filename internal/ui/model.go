@@ -236,6 +236,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, waitForDBEvent(m.eventCh)
 
+	case ReviewSuggestionsMsg:
+		// Focus the command bar and forward the message so it can update its
+		// collaborator list and pre-fill the input.
+		m.commandBarFocused = true
+		var cmd tea.Cmd
+		m.commandBar, cmd = m.commandBar.Update(ev)
+		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+
 	default:
 		// Forward unrecognised messages to all sub-models.
 		var cmds []tea.Cmd

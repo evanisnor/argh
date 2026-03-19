@@ -69,6 +69,12 @@ type HelpOverlay interface {
 	Show()
 }
 
+// ReviewSuggester suggests reviewers for a pull request when no explicit
+// @users are provided to the :request command.
+type ReviewSuggester interface {
+	SuggestReviewers(ctx context.Context, repo string, number int) ([]string, error)
+}
+
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 // CommandResultMsg carries the outcome of a command execution back to the UI.
@@ -88,6 +94,16 @@ type CommandComposeMsg struct {
 	OnSubmit func(body string) tea.Cmd
 }
 
+// ReviewSuggestionsMsg is sent when reviewer suggestions are ready to be shown
+// to the user. The UI should update the collaborator list and pre-fill the
+// command bar so the user can select from the suggestions.
+type ReviewSuggestionsMsg struct {
+	PR          persistence.PullRequest
+	Suggestions []string
+	// InputPrefix is the pre-filled command bar text, e.g. ":request #42 @".
+	InputPrefix string
+}
+
 // ── CommandExecutor ───────────────────────────────────────────────────────────
 
 // CommandExecutor dispatches parsed command-bar input to the appropriate
@@ -101,6 +117,7 @@ type CommandExecutor struct {
 	dnd       DNDController
 	watches   WatchEngine
 	help      HelpOverlay
+	suggester ReviewSuggester
 }
 
 // CommandExecutorConfig groups all dependencies for NewCommandExecutor.
@@ -113,19 +130,21 @@ type CommandExecutorConfig struct {
 	DND       DNDController
 	Watches   WatchEngine
 	Help      HelpOverlay
+	Suggester ReviewSuggester
 }
 
 // NewCommandExecutor creates a CommandExecutor with the given dependencies.
 func NewCommandExecutor(cfg CommandExecutorConfig) *CommandExecutor {
 	return &CommandExecutor{
-		mutator: cfg.Mutator,
-		store:   cfg.Store,
-		poll:    cfg.Poll,
-		browser: cfg.Browser,
-		diff:    cfg.Diff,
-		dnd:     cfg.DND,
-		watches: cfg.Watches,
-		help:    cfg.Help,
+		mutator:   cfg.Mutator,
+		store:     cfg.Store,
+		poll:      cfg.Poll,
+		browser:   cfg.Browser,
+		diff:      cfg.Diff,
+		dnd:       cfg.DND,
+		watches:   cfg.Watches,
+		help:      cfg.Help,
+		suggester: cfg.Suggester,
 	}
 }
 
@@ -395,6 +414,8 @@ func (e *CommandExecutor) execDND(args []string) tea.Cmd {
 }
 
 // execRequest handles :request [#pr] @user...
+// When no @users are provided, the suggester is queried and a
+// ReviewSuggestionsMsg is returned so the user can select from suggestions.
 func (e *CommandExecutor) execRequest(args []string) tea.Cmd {
 	return func() tea.Msg {
 		if len(args) == 0 {
@@ -413,6 +434,19 @@ func (e *CommandExecutor) execRequest(args []string) tea.Cmd {
 			}
 		}
 		if len(users) == 0 {
+			// No users specified — fetch suggestions if available.
+			if e.suggester != nil {
+				suggestions, err := e.suggester.SuggestReviewers(context.Background(), pr.Repo, pr.Number)
+				if err != nil {
+					return CommandResultMsg{Err: fmt.Errorf(":request: fetching suggestions: %w", err)}
+				}
+				// Build input prefix using session ID when available.
+				prefix := fmt.Sprintf(":request #%d @", pr.Number)
+				if sid, err2 := e.store.GetSessionID(pr.URL); err2 == nil && sid != "" {
+					prefix = fmt.Sprintf(":request %s @", sid)
+				}
+				return ReviewSuggestionsMsg{PR: pr, Suggestions: suggestions, InputPrefix: prefix}
+			}
 			return CommandResultMsg{Err: fmt.Errorf(":request: no reviewers specified")}
 		}
 		if e.mutator == nil {

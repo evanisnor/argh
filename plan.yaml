@@ -828,7 +828,7 @@ tasks:
 
   - id: 34
     title: Smart review assignment suggestions (VISION.md §9.2)
-    status: pending
+    status: done
     depends_on: [9, 21]
     description: >
       When :request #pr is invoked without explicit @users, show a ranked

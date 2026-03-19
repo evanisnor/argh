@@ -1212,3 +1212,132 @@ func TestMaxLastActivityAt_ClosedDB(t *testing.T) {
 		t.Error("expected error with closed DB")
 	}
 }
+
+// ── ListReviewersByRepo ───────────────────────────────────────────────────────
+
+func TestListReviewersByRepo_ReturnsDistinctLogins(t *testing.T) {
+	db := openTestDB(t)
+
+	pr1 := PullRequest{
+		ID: "pr-1", Repo: "owner/repo", Number: 1, Title: "PR 1",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo/pull/1",
+	}
+	pr2 := PullRequest{
+		ID: "pr-2", Repo: "owner/repo", Number: 2, Title: "PR 2",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-02T00:00:00Z"), UpdatedAt: makeTime("2024-01-02T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-02T00:00:00Z"), URL: "https://github.com/owner/repo/pull/2",
+	}
+	if err := db.UpsertPullRequest(pr1); err != nil {
+		t.Fatalf("UpsertPullRequest(pr1): %v", err)
+	}
+	if err := db.UpsertPullRequest(pr2); err != nil {
+		t.Fatalf("UpsertPullRequest(pr2): %v", err)
+	}
+
+	// bob reviews pr-1, carol reviews both — carol should appear only once.
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-1", Login: "bob", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer bob: %v", err)
+	}
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-1", Login: "carol", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer carol pr-1: %v", err)
+	}
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-2", Login: "carol", State: "CHANGES_REQUESTED"}); err != nil {
+		t.Fatalf("UpsertReviewer carol pr-2: %v", err)
+	}
+
+	got, err := db.ListReviewersByRepo("owner/repo")
+	if err != nil {
+		t.Fatalf("ListReviewersByRepo() error: %v", err)
+	}
+	// Expect alphabetically sorted: bob, carol
+	want := []string{"bob", "carol"}
+	if len(got) != len(want) {
+		t.Fatalf("ListReviewersByRepo() = %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("ListReviewersByRepo()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestListReviewersByRepo_DifferentRepo_Excluded(t *testing.T) {
+	db := openTestDB(t)
+
+	prA := PullRequest{
+		ID: "pr-a", Repo: "owner/repo-a", Number: 1, Title: "A",
+		Status: "open", CIState: "none", Author: "x",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo-a/pull/1",
+	}
+	prB := PullRequest{
+		ID: "pr-b", Repo: "owner/repo-b", Number: 1, Title: "B",
+		Status: "open", CIState: "none", Author: "y",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo-b/pull/1",
+	}
+	if err := db.UpsertPullRequest(prA); err != nil {
+		t.Fatalf("UpsertPullRequest(prA): %v", err)
+	}
+	if err := db.UpsertPullRequest(prB); err != nil {
+		t.Fatalf("UpsertPullRequest(prB): %v", err)
+	}
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-a", Login: "alice", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-b", Login: "bob", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+
+	got, err := db.ListReviewersByRepo("owner/repo-a")
+	if err != nil {
+		t.Fatalf("ListReviewersByRepo() error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "alice" {
+		t.Errorf("ListReviewersByRepo() = %v, want [alice]", got)
+	}
+}
+
+func TestListReviewersByRepo_EmptyResult(t *testing.T) {
+	db := openTestDB(t)
+	got, err := db.ListReviewersByRepo("owner/no-prs")
+	if err != nil {
+		t.Fatalf("ListReviewersByRepo() error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want empty list, got %v", got)
+	}
+}
+
+func TestListReviewersByRepo_QueryError(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, err := db.ListReviewersByRepo("owner/repo")
+	if err == nil {
+		t.Error("expected error from ListReviewersByRepo on closed DB")
+	}
+}
+
+func TestScanLogins_ScanError(t *testing.T) {
+	// scanLogins expects a single-column result. Feeding it a two-column row
+	// forces the scan to fail.
+	db := openTestDB(t)
+	if _, err := db.db.Exec(`CREATE TEMP TABLE two_col_l (a TEXT, b TEXT)`); err != nil {
+		t.Fatalf("create temp table: %v", err)
+	}
+	if _, err := db.db.Exec(`INSERT INTO two_col_l VALUES ('x', 'y')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	rows, err := db.db.Query(`SELECT a, b FROM two_col_l`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	_, err = scanLogins(rows)
+	if err == nil {
+		t.Error("expected scan error from two-column row into one variable")
+	}
+}

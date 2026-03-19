@@ -337,6 +337,35 @@ func scanReviewers(rows *sql.Rows) ([]Reviewer, error) {
 	return reviewers, rows.Err()
 }
 
+// ListReviewersByRepo returns all distinct reviewer logins that have reviewed
+// pull requests in the given repository, ordered alphabetically.
+func (d *DB) ListReviewersByRepo(repo string) ([]string, error) {
+	rows, err := d.db.Query(`
+		SELECT DISTINCT r.login
+		FROM reviewers r
+		JOIN pull_requests p ON r.pr_id = p.id
+		WHERE p.repo = ?
+		ORDER BY r.login
+	`, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanLogins(rows)
+}
+
+func scanLogins(rows *sql.Rows) ([]string, error) {
+	var logins []string
+	for rows.Next() {
+		var login string
+		if err := rows.Scan(&login); err != nil {
+			return nil, err
+		}
+		logins = append(logins, login)
+	}
+	return logins, rows.Err()
+}
+
 // ── Check Runs ───────────────────────────────────────────────────────────────
 
 // CheckRun represents a row in the check_runs table.

@@ -909,6 +909,77 @@ func TestExecute_Request_PRNotFound(t *testing.T) {
 	}
 }
 
+// ── :request with suggester ───────────────────────────────────────────────────
+
+type fakeReviewSuggester struct {
+	suggestions []string
+	err         error
+}
+
+func (f *fakeReviewSuggester) SuggestReviewers(_ context.Context, _ string, _ int) ([]string, error) {
+	return f.suggestions, f.err
+}
+
+func TestExecute_Request_WithSuggester_ReturnsSuggestions(t *testing.T) {
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	suggester := &fakeReviewSuggester{suggestions: []string{"alice", "bob"}}
+	exec := NewCommandExecutor(CommandExecutorConfig{
+		Store:     store,
+		Suggester: suggester,
+	})
+	msg := runCmd(t, exec.Execute(":request", []string{"a"}))
+	r, ok := msg.(ReviewSuggestionsMsg)
+	if !ok {
+		t.Fatalf("expected ReviewSuggestionsMsg, got %T: %v", msg, msg)
+	}
+	if len(r.Suggestions) != 2 {
+		t.Errorf("want 2 suggestions, got %v", r.Suggestions)
+	}
+	if r.Suggestions[0] != "alice" || r.Suggestions[1] != "bob" {
+		t.Errorf("unexpected suggestions: %v", r.Suggestions)
+	}
+	// Input prefix should use session ID "a" (sampleSessionIDs maps samplePRs()[0].URL → "a")
+	if r.InputPrefix == "" {
+		t.Error("InputPrefix should be non-empty")
+	}
+}
+
+func TestExecute_Request_WithSuggester_UsesNumberWhenNoSessionID(t *testing.T) {
+	// Store without session IDs so GetSessionID returns an error.
+	store := &fakePRStore{prs: samplePRs()}
+	suggester := &fakeReviewSuggester{suggestions: []string{"carol"}}
+	exec := NewCommandExecutor(CommandExecutorConfig{
+		Store:     store,
+		Suggester: suggester,
+	})
+	msg := runCmd(t, exec.Execute(":request", []string{"42"}))
+	r, ok := msg.(ReviewSuggestionsMsg)
+	if !ok {
+		t.Fatalf("expected ReviewSuggestionsMsg, got %T: %v", msg, msg)
+	}
+	// InputPrefix should fall back to #number format.
+	if r.InputPrefix != ":request #42 @" {
+		t.Errorf("InputPrefix = %q, want %q", r.InputPrefix, ":request #42 @")
+	}
+}
+
+func TestExecute_Request_WithSuggester_Error(t *testing.T) {
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	suggester := &fakeReviewSuggester{err: errors.New("API down")}
+	exec := NewCommandExecutor(CommandExecutorConfig{
+		Store:     store,
+		Suggester: suggester,
+	})
+	msg := runCmd(t, exec.Execute(":request", []string{"a"}))
+	r, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if r.Err == nil {
+		t.Error("expected error from suggester")
+	}
+}
+
 // ── :label ────────────────────────────────────────────────────────────────────
 
 func TestExecute_Label_Add(t *testing.T) {

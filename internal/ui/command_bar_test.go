@@ -779,3 +779,53 @@ func TestRefreshSuggestions_ClampsCursor(t *testing.T) {
 		t.Errorf("expected suggCursor clamped to 0, got %d", cb.suggCursor)
 	}
 }
+
+// ── ReviewSuggestionsMsg ──────────────────────────────────────────────────────
+
+func TestCommandBar_ReviewSuggestionsMsg_UpdatesCollaboratorsAndFocuses(t *testing.T) {
+	cb := NewCommandBar()
+	pr := samplePRRefs()[0]
+	prData := struct {
+		Number int
+		URL    string
+		Repo   string
+	}{Number: pr.Number, URL: pr.URL, Repo: pr.Repo}
+	_ = prData
+
+	suggestions := []string{"alice", "bob", "carol"}
+	sm, _ := cb.Update(ReviewSuggestionsMsg{
+		Suggestions: suggestions,
+		InputPrefix: ":request #42 @",
+	})
+	cb = sm.(*CommandBar)
+
+	if !cb.focused {
+		t.Error("expected command bar to be focused after ReviewSuggestionsMsg")
+	}
+	if cb.input.Value() != ":request #42 @" {
+		t.Errorf("input = %q, want %q", cb.input.Value(), ":request #42 @")
+	}
+	if len(cb.collaborators) != 3 {
+		t.Errorf("collaborators = %v, want 3 entries", cb.collaborators)
+	}
+	// Suggestions should appear in autocomplete (collaborator mode active).
+	if len(cb.suggestions) == 0 {
+		t.Error("expected suggestions to be populated after ReviewSuggestionsMsg")
+	}
+}
+
+func TestCommandBar_ReviewSuggestionsMsg_EmptySuggestions(t *testing.T) {
+	cb := NewCommandBar()
+	sm, _ := cb.Update(ReviewSuggestionsMsg{
+		Suggestions: nil,
+		InputPrefix: ":request #7 @",
+	})
+	cb = sm.(*CommandBar)
+
+	if !cb.focused {
+		t.Error("expected command bar to be focused")
+	}
+	if len(cb.collaborators) != 0 {
+		t.Errorf("expected empty collaborators, got %v", cb.collaborators)
+	}
+}
