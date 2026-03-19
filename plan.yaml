@@ -11,6 +11,9 @@
 # Mock external boundaries (GitHub API, filesystem, OS notifications) with
 # interfaces; test internal logic against fakes or in-memory implementations.
 
+# ─── Task Status Values ───────────────────────────────────────────────────────
+# Valid status values: pending | inprogress | done
+
 tasks:
 
   # ─── Phase 1: Project Foundation ────────────────────────────────────────────
