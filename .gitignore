@@ -3,3 +3,4 @@
 dist
 argh
 **/coverage.out
+**/.DS_Store
