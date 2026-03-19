@@ -649,6 +649,46 @@ func TestNewMyPRsPanel(t *testing.T) {
 	}
 }
 
+// TestMyPRsPanel_ApprovedGreenHighlight verifies that an approved PR exercises
+// the green color code path.
+func TestMyPRsPanel_ApprovedGreenHighlight(t *testing.T) {
+	reader := newStubPRReader()
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", Repo: "repo", Number: 1, Title: "approved PR",
+			Status: "approved", CIState: "passing", URL: "https://gh/1", LastActivityAt: t0},
+	}
+	reader.sessionIDs["https://gh/1"] = "a"
+	panel := makePanel(reader)
+	view := panel.View()
+	if !strings.Contains(view, "approved PR") {
+		t.Errorf("expected 'approved PR' in view; got:\n%s", view)
+	}
+}
+
+// TestMyPRsPanel_RunningCIYellowHighlight verifies that a PR with running CI
+// exercises the yellow color code path.
+func TestMyPRsPanel_RunningCIYellowHighlight(t *testing.T) {
+	reader := newStubPRReader()
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", Repo: "repo", Number: 1, Title: "running CI PR",
+			Status: "open", CIState: "running", URL: "https://gh/1", LastActivityAt: t0},
+		{ID: "pr2", Repo: "repo", Number: 2, Title: "in_progress CI PR",
+			Status: "open", CIState: "in_progress", URL: "https://gh/2", LastActivityAt: t0},
+		{ID: "pr3", Repo: "repo", Number: 3, Title: "pending CI PR",
+			Status: "open", CIState: "pending", URL: "https://gh/3", LastActivityAt: t0},
+	}
+	reader.sessionIDs["https://gh/1"] = "a"
+	reader.sessionIDs["https://gh/2"] = "b"
+	reader.sessionIDs["https://gh/3"] = "c"
+	panel := makePanel(reader)
+	view := panel.View()
+	for _, title := range []string{"running CI PR", "in_progress CI PR", "pending CI PR"} {
+		if !strings.Contains(view, title) {
+			t.Errorf("expected %q in view; got:\n%s", title, view)
+		}
+	}
+}
+
 // TestMyPRsPanel_RefreshErrors verifies that refresh errors are returned and
 // the panel gracefully handles them (rows unchanged).
 func TestMyPRsPanel_RefreshErrors(t *testing.T) {

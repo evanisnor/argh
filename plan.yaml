@@ -718,7 +718,7 @@ tasks:
 
   - id: 29
     title: In-app visual notifications
-    status: pending
+    status: done
     depends_on: [14, 5]
     description: >
       Subscribe to DB events (task 5) in the UI model. For each high-signal

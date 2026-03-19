@@ -3,11 +3,13 @@ package ui
 
 import (
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/evanisnor/argh/internal/eventbus"
+	"github.com/evanisnor/argh/internal/persistence"
 )
 
 // Panel identifies which panel currently holds keyboard focus.
@@ -111,21 +113,24 @@ func newTheme(dark bool) Theme {
 // Model is the root Bubble Tea model. It holds references to all sub-models
 // and owns the top-level Update dispatch and View composition.
 type Model struct {
-	version          string
-	username         string
-	focused          Panel
-	myPRs            SubModel
-	reviewQueue      SubModel
-	watches          SubModel
-	detailPane       SubModel
-	commandBar       SubModel
-	detailOpen       bool
-	helpVisible      bool
+	version           string
+	username          string
+	focused           Panel
+	myPRs             SubModel
+	reviewQueue       SubModel
+	watches           SubModel
+	detailPane        SubModel
+	commandBar        SubModel
+	detailOpen        bool
+	helpVisible       bool
 	commandBarFocused bool
-	statusText       string
-	eventCh          chan eventbus.Event
-	unsubscribe      func()
-	theme            Theme
+	statusText        string
+	statusEventType   eventbus.EventType
+	lastEventTime     time.Time
+	clock             Clock
+	eventCh           chan eventbus.Event
+	unsubscribe       func()
+	theme             Theme
 }
 
 // New creates a root Model and subscribes to the event bus. Call Init() to
@@ -154,17 +159,18 @@ func New(version, username string, sub Subscriber,
 		commandBar:  commandBar,
 		detailOpen:  false,
 		statusText:  "",
+		clock:       realClock{},
 		eventCh:     ch,
 		unsubscribe: unsubscribe,
 		theme:       newTheme(lipgloss.HasDarkBackground()),
 	}
 }
 
-// NewWithTheme creates a root Model using an explicit Theme. Useful in tests to
-// avoid calling lipgloss.HasDarkBackground(), which requires a real terminal.
+// NewWithTheme creates a root Model using an explicit Theme and Clock. Useful in
+// tests to avoid calling lipgloss.HasDarkBackground() and time.Now() directly.
 func NewWithTheme(version, username string, sub Subscriber,
 	myPRs, reviewQueue, watches, detailPane, commandBar SubModel,
-	theme Theme) Model {
+	theme Theme, clock Clock) Model {
 
 	ch := make(chan eventbus.Event, 64)
 	unsubscribe := sub.Subscribe(func(e eventbus.Event) {
@@ -185,6 +191,7 @@ func NewWithTheme(version, username string, sub Subscriber,
 		commandBar:  commandBar,
 		detailOpen:  false,
 		statusText:  "",
+		clock:       clock,
 		eventCh:     ch,
 		unsubscribe: unsubscribe,
 		theme:       theme,
@@ -238,6 +245,8 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
 		cmds = append(cmds, c1, c2)
 		m.statusText = statusTextForEvent(e)
+		m.statusEventType = e.Type
+		m.lastEventTime = m.clock.Now()
 
 	case eventbus.CIChanged:
 		var c1, c2 tea.Cmd
@@ -245,6 +254,8 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
 		cmds = append(cmds, c1, c2)
 		m.statusText = statusTextForEvent(e)
+		m.statusEventType = e.Type
+		m.lastEventTime = m.clock.Now()
 
 	case eventbus.ReviewChanged:
 		var c1, c2 tea.Cmd
@@ -252,15 +263,21 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
 		cmds = append(cmds, c1, c2)
 		m.statusText = statusTextForEvent(e)
+		m.statusEventType = e.Type
+		m.lastEventTime = m.clock.Now()
 
 	case eventbus.WatchFired:
 		var c tea.Cmd
 		m.watches, c = m.watches.Update(DBEventMsg{Event: e})
 		cmds = append(cmds, c)
 		m.statusText = statusTextForEvent(e)
+		m.statusEventType = e.Type
+		m.lastEventTime = m.clock.Now()
 
 	case eventbus.RateLimitWarning:
 		m.statusText = "⚠ API rate limit low"
+		m.statusEventType = e.Type
+		m.lastEventTime = m.clock.Now()
 	}
 
 	// Re-arm the listener so we receive the next event.
@@ -268,20 +285,85 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// statusTextForEvent returns a brief status bar string for a bus event.
+// statusTextForEvent returns a status bar string for a bus event, extracting
+// PR details when available.
 func statusTextForEvent(e eventbus.Event) string {
 	switch e.Type {
 	case eventbus.PRUpdated:
-		return "PR updated"
+		if pr, ok := e.After.(persistence.PullRequest); ok {
+			return fmt.Sprintf("● PR #%d updated", pr.Number)
+		}
+		return "● PR updated"
 	case eventbus.CIChanged:
-		return "CI state changed"
+		if pr, ok := e.After.(persistence.PullRequest); ok {
+			symbol := prCIDisplay(pr.CIState)
+			return fmt.Sprintf("%s PR #%d CI %s", symbol, pr.Number, pr.CIState)
+		}
+		return "● CI state changed"
 	case eventbus.ReviewChanged:
-		return "Review changed"
+		if pr, ok := e.After.(persistence.PullRequest); ok {
+			return fmt.Sprintf("● PR #%d review changed", pr.Number)
+		}
+		return "● Review changed"
 	case eventbus.WatchFired:
-		return "Watch fired"
+		return "● Watch fired"
 	default:
 		return ""
 	}
+}
+
+// formatTimeAgo formats a duration as a human-readable "X ago" string.
+func formatTimeAgo(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%dh ago", int(d.Hours()))
+}
+
+// notifColor returns the lipgloss foreground color appropriate for the event type
+// and the current status text content.
+func notifColor(eventType eventbus.EventType, statusText string) lipgloss.Color {
+	switch eventType {
+	case eventbus.CIChanged:
+		if len(statusText) > 0 && (containsAny(statusText, "passing", "success")) {
+			return lipgloss.Color("#4CAF50") // green
+		}
+		return lipgloss.Color("#FF6B6B") // red
+	case eventbus.ReviewChanged:
+		if containsAny(statusText, "approved") {
+			return lipgloss.Color("#4CAF50") // green
+		}
+		if containsAny(statusText, "changes") {
+			return lipgloss.Color("#FF6B6B") // red
+		}
+		return lipgloss.Color("#42A5F5") // blue
+	case eventbus.WatchFired:
+		return lipgloss.Color("#4CAF50") // green
+	case eventbus.RateLimitWarning:
+		return lipgloss.Color("#FFC107") // yellow
+	default:
+		return lipgloss.Color("#42A5F5") // blue
+	}
+}
+
+// containsAny reports whether s contains any of the given substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if len(s) >= len(sub) {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // handleKey handles all global key bindings.
@@ -412,7 +494,10 @@ func (m Model) headerView() string {
 	right := "[?] help"
 	status := ""
 	if m.statusText != "" {
-		status = "  " + m.statusText
+		elapsed := m.clock.Now().Sub(m.lastEventTime)
+		color := notifColor(m.statusEventType, m.statusText)
+		coloredText := lipgloss.NewStyle().Foreground(color).Render(m.statusText)
+		status = "  " + coloredText + " — " + formatTimeAgo(elapsed)
 	}
 	return m.theme.Header.Render(left + status + "  " + right)
 }

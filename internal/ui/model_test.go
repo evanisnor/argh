@@ -3,11 +3,13 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/evanisnor/argh/internal/eventbus"
+	"github.com/evanisnor/argh/internal/persistence"
 )
 
 // ── test doubles ─────────────────────────────────────────────────────────────
@@ -79,7 +81,7 @@ func plainTheme() Theme {
 
 func newTestModel(myPRs, reviewQueue, watches, detail, cmdBar SubModel) (Model, *stubSubscriber) {
 	sub := &stubSubscriber{}
-	m := NewWithTheme("v0.0.0", "testuser", sub, myPRs, reviewQueue, watches, detail, cmdBar, plainTheme())
+	m := NewWithTheme("v0.0.0", "testuser", sub, myPRs, reviewQueue, watches, detail, cmdBar, plainTheme(), stubClock{now: t0})
 	return m, sub
 }
 
@@ -428,6 +430,7 @@ func TestNewWithTheme_UsesProvidedTheme(t *testing.T) {
 		newStub("detail", false),
 		newStub("cmdBar", false),
 		darkTheme,
+		stubClock{now: t0},
 	)
 
 	if !m.theme.Dark {
@@ -530,6 +533,255 @@ func TestStatusTextForEvent_Default(t *testing.T) {
 	got := statusTextForEvent(e)
 	if got != "" {
 		t.Errorf("statusTextForEvent for unknown type = %q, want empty string", got)
+	}
+}
+
+// TestStatusTextForEvent_WithPRPayload verifies statusTextForEvent includes the
+// PR number when the After field is a persistence.PullRequest.
+func TestStatusTextForEvent_WithPRPayload(t *testing.T) {
+	tests := []struct {
+		name        string
+		eventType   eventbus.EventType
+		pr          persistence.PullRequest
+		wantContain string
+	}{
+		{
+			name:        "PRUpdated includes PR number",
+			eventType:   eventbus.PRUpdated,
+			pr:          persistence.PullRequest{Number: 42},
+			wantContain: "#42",
+		},
+		{
+			name:        "CIChanged includes PR number",
+			eventType:   eventbus.CIChanged,
+			pr:          persistence.PullRequest{Number: 7, CIState: "passing"},
+			wantContain: "#7",
+		},
+		{
+			name:        "CIChanged includes CI state",
+			eventType:   eventbus.CIChanged,
+			pr:          persistence.PullRequest{Number: 7, CIState: "failing"},
+			wantContain: "failing",
+		},
+		{
+			name:        "ReviewChanged includes PR number",
+			eventType:   eventbus.ReviewChanged,
+			pr:          persistence.PullRequest{Number: 99},
+			wantContain: "#99",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := eventbus.Event{Type: tt.eventType, After: tt.pr}
+			got := statusTextForEvent(e)
+			if !strings.Contains(got, tt.wantContain) {
+				t.Errorf("statusTextForEvent() = %q, want to contain %q", got, tt.wantContain)
+			}
+		})
+	}
+}
+
+// TestStatusTextForEvent_WithoutPRPayload verifies statusTextForEvent falls
+// back gracefully when After is not a PullRequest.
+func TestStatusTextForEvent_WithoutPRPayload(t *testing.T) {
+	tests := []struct {
+		name        string
+		eventType   eventbus.EventType
+		wantContain string
+	}{
+		{"pr_updated", eventbus.PRUpdated, "PR"},
+		{"ci_changed", eventbus.CIChanged, "CI"},
+		{"review_changed", eventbus.ReviewChanged, "Review"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := eventbus.Event{Type: tt.eventType, After: "not-a-pr"}
+			got := statusTextForEvent(e)
+			if !strings.Contains(got, tt.wantContain) {
+				t.Errorf("statusTextForEvent() = %q, want to contain %q", got, tt.wantContain)
+			}
+		})
+	}
+}
+
+// TestFormatTimeAgo verifies time-ago formatting.
+func TestFormatTimeAgo(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{-5 * time.Second, "0s ago"},
+		{0, "0s ago"},
+		{30 * time.Second, "30s ago"},
+		{59 * time.Second, "59s ago"},
+		{1 * time.Minute, "1m ago"},
+		{45 * time.Minute, "45m ago"},
+		{1 * time.Hour, "1h ago"},
+		{3 * time.Hour, "3h ago"},
+	}
+	for _, tt := range tests {
+		got := formatTimeAgo(tt.d)
+		if got != tt.want {
+			t.Errorf("formatTimeAgo(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+// TestHeaderView_ShowsTimeAgo verifies the header includes time-ago info when
+// a status event has been received.
+func TestHeaderView_ShowsTimeAgo(t *testing.T) {
+	eventTime := t0
+	viewTime := t0.Add(42 * time.Second)
+
+	sub := &stubSubscriber{}
+	m := NewWithTheme("v0.0.0", "testuser", sub,
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+		plainTheme(),
+		stubClock{now: eventTime},
+	)
+
+	// Receive a CI event so statusText and lastEventTime are set.
+	e := eventbus.Event{
+		Type:  eventbus.CIChanged,
+		After: persistence.PullRequest{Number: 5, CIState: "failing"},
+	}
+	m = applyMsg(m, DBEventMsg{Event: e})
+
+	// Advance the clock so there is measurable elapsed time.
+	m.clock = stubClock{now: viewTime}
+
+	view := m.View()
+	if !strings.Contains(view, "42s ago") {
+		t.Errorf("header should contain '42s ago'; got:\n%s", view)
+	}
+}
+
+// TestHeaderView_ShowsPRNumber verifies the header includes the PR number from
+// the event payload.
+func TestHeaderView_ShowsPRNumber(t *testing.T) {
+	sub := &stubSubscriber{}
+	m := NewWithTheme("v0.0.0", "testuser", sub,
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+		plainTheme(),
+		stubClock{now: t0},
+	)
+
+	e := eventbus.Event{
+		Type:  eventbus.PRUpdated,
+		After: persistence.PullRequest{Number: 123},
+	}
+	m = applyMsg(m, DBEventMsg{Event: e})
+
+	view := m.View()
+	if !strings.Contains(view, "#123") {
+		t.Errorf("header should contain '#123'; got:\n%s", view)
+	}
+}
+
+// TestNotifColor verifies notifColor returns appropriate colors for each event type.
+func TestNotifColor(t *testing.T) {
+	tests := []struct {
+		name       string
+		eventType  eventbus.EventType
+		statusText string
+		wantColor  lipgloss.Color
+	}{
+		{"CI passing → green", eventbus.CIChanged, "✓ PR #1 CI passing", lipgloss.Color("#4CAF50")},
+		{"CI success → green", eventbus.CIChanged, "✓ PR #1 CI success", lipgloss.Color("#4CAF50")},
+		{"CI failing → red", eventbus.CIChanged, "✗ PR #1 CI failing", lipgloss.Color("#FF6B6B")},
+		{"Review approved → green", eventbus.ReviewChanged, "✓ PR #1 approved", lipgloss.Color("#4CAF50")},
+		{"Review changes → red", eventbus.ReviewChanged, "✗ PR #1 changes requested", lipgloss.Color("#FF6B6B")},
+		{"Review changed → blue", eventbus.ReviewChanged, "● PR #1 review changed", lipgloss.Color("#42A5F5")},
+		{"Watch fired → green", eventbus.WatchFired, "● Watch fired", lipgloss.Color("#4CAF50")},
+		{"Rate limit warning → yellow", eventbus.RateLimitWarning, "⚠ API rate limit low", lipgloss.Color("#FFC107")},
+		{"PR updated → blue", eventbus.PRUpdated, "● PR #1 updated", lipgloss.Color("#42A5F5")},
+		{"Unknown type → blue", "UNKNOWN", "", lipgloss.Color("#42A5F5")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := notifColor(tt.eventType, tt.statusText)
+			if got != tt.wantColor {
+				t.Errorf("notifColor(%q, %q) = %q, want %q", tt.eventType, tt.statusText, got, tt.wantColor)
+			}
+		})
+	}
+}
+
+// TestContainsAny verifies the containsAny helper.
+func TestContainsAny(t *testing.T) {
+	tests := []struct {
+		s    string
+		subs []string
+		want bool
+	}{
+		{"CI passing", []string{"passing"}, true},
+		{"CI failing", []string{"passing", "success"}, false},
+		{"CI success", []string{"passing", "success"}, true},
+		{"", []string{"passing"}, false},
+		{"hello world", []string{"world", "xyz"}, true},
+		{"hello", []string{}, false},
+	}
+	for _, tt := range tests {
+		got := containsAny(tt.s, tt.subs...)
+		if got != tt.want {
+			t.Errorf("containsAny(%q, %v) = %v, want %v", tt.s, tt.subs, got, tt.want)
+		}
+	}
+}
+
+// TestDBEvent_SetsStatusEventType verifies that handleDBEvent stores the event type
+// for use in color coding.
+func TestDBEvent_SetsStatusEventType(t *testing.T) {
+	tests := []eventbus.EventType{
+		eventbus.PRUpdated,
+		eventbus.CIChanged,
+		eventbus.ReviewChanged,
+		eventbus.WatchFired,
+		eventbus.RateLimitWarning,
+	}
+	for _, et := range tests {
+		t.Run(string(et), func(t *testing.T) {
+			m, _ := newTestModel(
+				newStub("myPRs", true),
+				newStub("reviewQueue", true),
+				newStub("watches", true),
+				newStub("detail", false),
+				newStub("cmdBar", false),
+			)
+			m = applyMsg(m, DBEventMsg{Event: eventbus.Event{Type: et}})
+			if m.statusEventType != et {
+				t.Errorf("statusEventType = %q, want %q", m.statusEventType, et)
+			}
+		})
+	}
+}
+
+// TestDBEvent_SetsLastEventTime verifies that handleDBEvent records the event time.
+func TestDBEvent_SetsLastEventTime(t *testing.T) {
+	eventTime := t1
+	sub := &stubSubscriber{}
+	m := NewWithTheme("v0.0.0", "testuser", sub,
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+		plainTheme(),
+		stubClock{now: eventTime},
+	)
+
+	m = applyMsg(m, DBEventMsg{Event: eventbus.Event{Type: eventbus.PRUpdated}})
+
+	if !m.lastEventTime.Equal(eventTime) {
+		t.Errorf("lastEventTime = %v, want %v", m.lastEventTime, eventTime)
 	}
 }
 

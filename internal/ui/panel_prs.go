@@ -198,11 +198,18 @@ func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 	if row.pr.Draft {
 		style = style.Faint(true)
 	}
-	if row.pr.CIState == "failing" || row.pr.CIState == "failure" {
-		style = style.Foreground(lipgloss.Color("#FF6B6B"))
+	// Color based on state; higher-priority states override lower ones.
+	if row.pr.Status == "approved" || row.pr.CIState == "passing" || row.pr.CIState == "success" {
+		style = style.Foreground(lipgloss.Color("#4CAF50")) // green: approved/passing
+	}
+	if row.pr.CIState == "running" || row.pr.CIState == "in_progress" || row.pr.CIState == "pending" {
+		style = style.Foreground(lipgloss.Color("#FFC107")) // yellow: pending/waiting
 	}
 	if row.changesCount > 0 {
-		style = style.Foreground(lipgloss.Color("#FFA07A"))
+		style = style.Foreground(lipgloss.Color("#FFA07A")) // orange: changes requested
+	}
+	if row.pr.CIState == "failing" || row.pr.CIState == "failure" {
+		style = style.Foreground(lipgloss.Color("#FF6B6B")) // red: CI failing (highest priority)
 	}
 	if p.flashing[row.pr.ID] {
 		style = style.Bold(true)
