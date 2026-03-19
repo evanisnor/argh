@@ -311,7 +311,7 @@ tasks:
 
   - id: 14
     title: Bubble Tea root model and layout (internal/ui/model.go)
-    status: pending
+    status: done
     depends_on: [5]
     description: >
       Initialize the Bubble Tea program. Root model holds references to all
