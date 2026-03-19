@@ -7,6 +7,8 @@ import (
 
 	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
+	"github.com/google/go-github/v69/github"
+	"github.com/shurcooL/githubv4"
 )
 
 // StubCommandExecutor is a test double for CommandExecutor.
@@ -137,4 +139,107 @@ func NewStubReviewQueueStore() *StubReviewQueueStore {
 func (s *StubReviewQueueStore) InsertTimelineEvent(te persistence.TimelineEvent) error {
 	s.InsertedTimelineEvents = append(s.InsertedTimelineEvents, te)
 	return s.InsertTimelineEventFunc(te)
+}
+
+// ── Mutation stubs ─────────────────────────────────────────────────────────────
+
+// StubPullRequestsService is a test double for PullRequestsService.
+type StubPullRequestsService struct {
+	CreateReviewFunc     func(ctx context.Context, owner, repo string, number int, review *github.PullRequestReviewRequest) (*github.PullRequestReview, *github.Response, error)
+	RequestReviewersFunc func(ctx context.Context, owner, repo string, number int, reviewers github.ReviewersRequest) (*github.PullRequest, *github.Response, error)
+	MergeFunc            func(ctx context.Context, owner, repo string, number int, commitMessage string, options *github.PullRequestOptions) (*github.PullRequestMergeResult, *github.Response, error)
+}
+
+func NewStubPullRequestsService() *StubPullRequestsService {
+	return &StubPullRequestsService{
+		CreateReviewFunc:     func(_ context.Context, _, _ string, _ int, _ *github.PullRequestReviewRequest) (*github.PullRequestReview, *github.Response, error) { return nil, nil, nil },
+		RequestReviewersFunc: func(_ context.Context, _, _ string, _ int, _ github.ReviewersRequest) (*github.PullRequest, *github.Response, error) { return nil, nil, nil },
+		MergeFunc:            func(_ context.Context, _, _ string, _ int, _ string, _ *github.PullRequestOptions) (*github.PullRequestMergeResult, *github.Response, error) { return nil, nil, nil },
+	}
+}
+
+func (s *StubPullRequestsService) CreateReview(ctx context.Context, owner, repo string, number int, review *github.PullRequestReviewRequest) (*github.PullRequestReview, *github.Response, error) {
+	return s.CreateReviewFunc(ctx, owner, repo, number, review)
+}
+
+func (s *StubPullRequestsService) RequestReviewers(ctx context.Context, owner, repo string, number int, reviewers github.ReviewersRequest) (*github.PullRequest, *github.Response, error) {
+	return s.RequestReviewersFunc(ctx, owner, repo, number, reviewers)
+}
+
+func (s *StubPullRequestsService) Merge(ctx context.Context, owner, repo string, number int, commitMessage string, options *github.PullRequestOptions) (*github.PullRequestMergeResult, *github.Response, error) {
+	return s.MergeFunc(ctx, owner, repo, number, commitMessage, options)
+}
+
+// StubIssuesService is a test double for IssuesService.
+type StubIssuesService struct {
+	CreateCommentFunc      func(ctx context.Context, owner, repo string, number int, comment *github.IssueComment) (*github.IssueComment, *github.Response, error)
+	AddLabelsToIssueFunc   func(ctx context.Context, owner, repo string, number int, labels []string) ([]*github.Label, *github.Response, error)
+	RemoveLabelForIssueFunc func(ctx context.Context, owner, repo string, number int, label string) (*github.Response, error)
+	EditFunc               func(ctx context.Context, owner, repo string, number int, issue *github.IssueRequest) (*github.Issue, *github.Response, error)
+}
+
+func NewStubIssuesService() *StubIssuesService {
+	return &StubIssuesService{
+		CreateCommentFunc:      func(_ context.Context, _, _ string, _ int, _ *github.IssueComment) (*github.IssueComment, *github.Response, error) { return nil, nil, nil },
+		AddLabelsToIssueFunc:   func(_ context.Context, _, _ string, _ int, _ []string) ([]*github.Label, *github.Response, error) { return nil, nil, nil },
+		RemoveLabelForIssueFunc: func(_ context.Context, _, _ string, _ int, _ string) (*github.Response, error) { return nil, nil },
+		EditFunc:               func(_ context.Context, _, _ string, _ int, _ *github.IssueRequest) (*github.Issue, *github.Response, error) { return nil, nil, nil },
+	}
+}
+
+func (s *StubIssuesService) CreateComment(ctx context.Context, owner, repo string, number int, comment *github.IssueComment) (*github.IssueComment, *github.Response, error) {
+	return s.CreateCommentFunc(ctx, owner, repo, number, comment)
+}
+
+func (s *StubIssuesService) AddLabelsToIssue(ctx context.Context, owner, repo string, number int, labels []string) ([]*github.Label, *github.Response, error) {
+	return s.AddLabelsToIssueFunc(ctx, owner, repo, number, labels)
+}
+
+func (s *StubIssuesService) RemoveLabelForIssue(ctx context.Context, owner, repo string, number int, label string) (*github.Response, error) {
+	return s.RemoveLabelForIssueFunc(ctx, owner, repo, number, label)
+}
+
+func (s *StubIssuesService) Edit(ctx context.Context, owner, repo string, number int, issue *github.IssueRequest) (*github.Issue, *github.Response, error) {
+	return s.EditFunc(ctx, owner, repo, number, issue)
+}
+
+// StubGraphQLMutator is a test double for GraphQLMutator.
+type StubGraphQLMutator struct {
+	MutateFunc func(ctx context.Context, m interface{}, input githubv4.Input, variables map[string]interface{}) error
+}
+
+func NewStubGraphQLMutator() *StubGraphQLMutator {
+	return &StubGraphQLMutator{
+		MutateFunc: func(_ context.Context, _ interface{}, _ githubv4.Input, _ map[string]interface{}) error { return nil },
+	}
+}
+
+func (s *StubGraphQLMutator) Mutate(ctx context.Context, m interface{}, input githubv4.Input, variables map[string]interface{}) error {
+	return s.MutateFunc(ctx, m, input, variables)
+}
+
+// StubAuditLogger is a test double for AuditLogger that records all log calls.
+type StubAuditLogger struct {
+	Entries []AuditEntry
+	LogFunc func(ctx context.Context, action, owner, repo string, number int, details string) error
+}
+
+// AuditEntry records a single audit log call for test assertions.
+type AuditEntry struct {
+	Action  string
+	Owner   string
+	Repo    string
+	Number  int
+	Details string
+}
+
+func NewStubAuditLogger() *StubAuditLogger {
+	return &StubAuditLogger{
+		LogFunc: func(_ context.Context, _, _, _ string, _ int, _ string) error { return nil },
+	}
+}
+
+func (s *StubAuditLogger) Log(ctx context.Context, action, owner, repo string, number int, details string) error {
+	s.Entries = append(s.Entries, AuditEntry{Action: action, Owner: owner, Repo: repo, Number: number, Details: details})
+	return s.LogFunc(ctx, action, owner, repo, number, details)
 }

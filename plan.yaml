@@ -203,7 +203,7 @@ tasks:
 
   - id: 9
     title: REST mutations — PR actions
-    status: pending
+    status: done
     depends_on: [6]
     description: >
       Implement REST action methods via google/go-github for all write operations:
