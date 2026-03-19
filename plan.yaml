@@ -446,7 +446,7 @@ tasks:
 
   - id: 19
     title: Watches panel (internal/ui/panel_watches.go)
-    status: pending
+    status: done
     depends_on: [14]
     description: >
       Render the Watches panel as the always-visible third panel. Read watch
