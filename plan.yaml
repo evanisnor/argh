@@ -1,0 +1,696 @@
+---
+# argh — Implementation Plan
+# Generated from VISION.md and ARCHITECTURE.md
+# Last updated: 2026-03-18
+
+tasks:
+
+  # ─── Phase 1: Project Foundation ────────────────────────────────────────────
+
+  - id: 1
+    title: Initialize Go module and directory structure
+    status: pending
+    depends_on: []
+    description: >
+      Run `go mod init github.com/evanisnor/argh` targeting Go 1.22+. Create the
+      canonical directory layout from ARCHITECTURE.md:
+        cmd/argh/main.go
+        internal/api/
+        internal/ui/
+        internal/watches/
+        internal/notify/
+        internal/config/
+        internal/persistence/
+        internal/diff/
+      Add a stub main.go that prints the version and exits cleanly.
+      Add a Brewfile at the repo root.
+    references:
+      - "ARCHITECTURE.md § Directory Structure"
+      - "ARCHITECTURE.md § Technology Stack"
+
+  - id: 2
+    title: macOS-only runtime guard
+    status: pending
+    depends_on: [1]
+    description: >
+      At startup, check `runtime.GOOS == "darwin"`. If not, print an informative
+      error ("argh v1 is macOS only") and exit with a non-zero status code.
+      This is a hard non-goal for v1 per the PRD.
+    references:
+      - "VISION.md § 1 Non-Goals — Windows or Linux support"
+
+  - id: 3
+    title: Config loading (internal/config)
+    status: pending
+    depends_on: [1]
+    description: >
+      Implement config loading from ~/.config/argh/config.yaml using
+      gopkg.in/yaml.v3. Provide sane defaults for all fields. Config struct
+      should cover:
+        - poll_interval (default 10s)
+        - notifications: ci_pass, ci_fail, approved, changes_requested,
+          review_requested, merged, watch_triggered (all bool)
+        - do_not_disturb.schedule (list of windows with days/from/to/all_day)
+        - sleep_schedule.poll_interval (default 5m) and windows (same shape)
+      Create the config directory (~/.config/argh/) on first run if absent.
+      Expose a global Config singleton loaded once at startup.
+    references:
+      - "VISION.md § 7 Notification System — configurable per-event yaml"
+      - "VISION.md § 9.6 Do Not Disturb Mode — scheduled DND yaml"
+      - "VISION.md § 9.7 Sleep Schedule — yaml config"
+      - "ARCHITECTURE.md § Technology Stack — Config: YAML via gopkg.in/yaml.v3"
+
+  # ─── Phase 2: Persistence / Cache Layer ─────────────────────────────────────
+
+  - id: 4
+    title: SQLite schema and persistence layer (internal/persistence)
+    status: pending
+    depends_on: [1]
+    description: >
+      Set up mattn/go-sqlite3. Design and migrate the schema covering:
+        - pull_requests: id, repo, number, title, status, ci_state, draft,
+          author, created_at, updated_at, last_activity_at, url, global_id
+        - reviewers: pr_id, login, state (APPROVED, CHANGES_REQUESTED,
+          PENDING, COMMENTED)
+        - check_runs: pr_id, name, state, conclusion, url
+        - review_threads: pr_id, id, resolved, body, path, line
+        - timeline_events: pr_id, event_type, actor, created_at, payload_json
+        - watches: id, pr_url, pr_number, repo, trigger_expr, action_expr,
+          status (waiting, scheduled, fired, failed), created_at, fired_at
+        - session_ids: pr_url, session_id  (reset on restart)
+        - rate_limit: singleton row tracking remaining/reset values
+      Use WAL mode for concurrent reads. Expose typed read/write methods.
+      Store database at ~/.local/share/argh/argh.db; create directory on first run.
+    references:
+      - "ARCHITECTURE.md § High-Level Architecture — DB: SQLite reactive cache"
+      - "ARCHITECTURE.md § Data Flow Principles"
+      - "VISION.md § 9.1 PR Status Bar Overlay — reads from local SQLite"
+
+  - id: 5
+    title: Reactive event bus (DB → subscribers)
+    status: pending
+    depends_on: [4]
+    description: >
+      Implement a lightweight in-process publish/subscribe event bus that the
+      persistence layer fires whenever a row changes. Events should carry:
+        - event type (PR_UPDATED, CI_CHANGED, REVIEW_CHANGED, WATCH_FIRED, etc.)
+        - before and after snapshots of the changed row
+      The UI model and Watch Engine both subscribe to this bus. Use Go channels
+      or a callback registry. This is the mechanism that makes UI reactive without
+      the UI polling the database.
+    references:
+      - "ARCHITECTURE.md § Data Flow Principles — DB emits events to UI and Watch"
+
+  # ─── Phase 3: GitHub API Client ─────────────────────────────────────────────
+
+  - id: 6
+    title: GitHub authentication via gh CLI (internal/api)
+    status: pending
+    depends_on: [1]
+    description: >
+      Shell out to `gh auth token` to retrieve the current authenticated user's
+      token. Fail fast with a clear error if `gh` is not installed or not
+      authenticated. Store token in memory for the lifetime of the process.
+      Also fetch the authenticated user's login (`gh api user --jq .login`)
+      for use in search queries.
+    references:
+      - "ARCHITECTURE.md § GitHub API Strategy — Authentication: gh auth token"
+
+  - id: 7
+    title: GraphQL client — fetch My Pull Requests
+    status: pending
+    depends_on: [6, 4]
+    description: >
+      Use shurcooL/githubv4 to query `search(query: "is:pr is:open author:@me")`
+      for all open PRs authored by the current user across all repos. For each PR
+      fetch: repo, number, title, state, isDraft, createdAt, updatedAt,
+      reviewRequests (requestedReviewers), reviews (nodes: author, state),
+      checkSuites → checkRuns (name, status, conclusion), url, id, comments count.
+      Write results into the persistence layer. Track last-seen state to detect
+      changes and emit events.
+    references:
+      - "VISION.md § 3.1 My Pull Requests Panel — columns"
+      - "ARCHITECTURE.md § GitHub API Strategy — GraphQL Search, GraphQL Query"
+
+  - id: 8
+    title: GraphQL client — fetch Review Queue
+    status: pending
+    depends_on: [6, 4]
+    description: >
+      Query `search(query: "is:pr is:open review-requested:@me")` to find PRs
+      where the current user is a requested reviewer. Same nested fields as
+      task 7. Write into persistence layer. Include author login and per-PR
+      timeline events for urgency calculation (last activity timestamp,
+      author wait time).
+    references:
+      - "VISION.md § 3.2 Review Queue Panel — columns and urgency formula"
+      - "ARCHITECTURE.md § GitHub API Strategy — GraphQL Search"
+
+  - id: 9
+    title: REST mutations — PR actions
+    status: pending
+    depends_on: [6]
+    description: >
+      Implement REST action methods via google/go-github for all write operations:
+        - approve(repo, number)          → POST /pulls/{number}/reviews
+        - requestReview(repo, number, users)
+        - postComment(repo, number, body)
+        - addLabel / removeLabel
+        - mergePR(repo, number, method)  → PUT /pulls/{number}/merge
+        - closePR / reopenPR
+        - markReadyForReview / convertToDraft (GraphQL mutations — no REST equivalent)
+      Every mutation appends a line to the audit log (task 24).
+    references:
+      - "VISION.md § 3.6 Interactive Commands"
+      - "ARCHITECTURE.md § GitHub API Strategy — REST API: mutations"
+
+  - id: 10
+    title: Rate limit tracking and adaptive back-off
+    status: pending
+    depends_on: [7, 8]
+    description: >
+      On every API response, read x-ratelimit-remaining and x-ratelimit-reset
+      headers. Persist values to the rate_limit singleton row in SQLite. Apply
+      adaptive back-off logic:
+        remaining > 1000  → poll at configured interval
+        500–999           → 2× interval
+        100–499           → 5× interval
+        < 100             → pause polling, emit warning event for status bar
+      Expose current rate limit state for the status bar display
+      ("API ●●●○ 3,847/5,000").
+    references:
+      - "ARCHITECTURE.md § Polling & Rate Limits — Adaptive Back-Off"
+
+  - id: 11
+    title: ETag / conditional request caching for REST endpoints
+    status: pending
+    depends_on: [9]
+    description: >
+      For REST endpoints used in polling (PR details, check runs), store the
+      ETag and Last-Modified response headers in SQLite. On subsequent requests
+      send If-None-Match / If-Modified-Since. A 304 response skips writing to
+      the DB and costs 0 primary-limit points.
+    references:
+      - "ARCHITECTURE.md § Polling & Rate Limits — REST Conditional Requests"
+
+  # ─── Phase 4: Poll Ticker & Sleep Schedule ───────────────────────────────────
+
+  - id: 12
+    title: Poll ticker goroutine
+    status: pending
+    depends_on: [7, 8, 10]
+    description: >
+      Start a goroutine that fires the GraphQL fetch (tasks 7 & 8) on a
+      configurable ticker defaulting to 10s. The ticker interval is dynamically
+      adjusted by the rate-limit back-off logic (task 10) and the sleep schedule
+      (task 13). Expose a channel to force an immediate poll (used by :reload).
+      Gracefully shut down on process exit.
+    references:
+      - "ARCHITECTURE.md § High-Level Architecture — Poll Ticker"
+      - "ARCHITECTURE.md § Chosen Poll Interval: 10 seconds"
+
+  - id: 13
+    title: Sleep schedule — reduced polling during off-hours
+    status: pending
+    depends_on: [3, 12]
+    description: >
+      Read sleep_schedule config (windows + poll_interval). Before each tick,
+      check whether the current time falls inside a sleep window. If so, use
+      the sleep poll_interval instead of the normal one. Status bar shows
+      "💤 sleeping (next poll in Xm)" during sleep windows. Implement :wake
+      command to immediately resume normal polling regardless of schedule.
+    references:
+      - "VISION.md § 9.7 Sleep Schedule"
+
+  # ─── Phase 5: TUI Foundation ─────────────────────────────────────────────────
+
+  - id: 14
+    title: Bubble Tea root model and layout (internal/ui/model.go)
+    status: pending
+    depends_on: [5]
+    description: >
+      Initialize the Bubble Tea program. Root model holds references to all
+      sub-models (panels, command bar, detail pane). Implement the top-level
+      Update() dispatching messages to the correct sub-model. Implement View()
+      composing the full terminal layout using lipgloss:
+        - Header bar (app name, version, username, global status)
+        - My Pull Requests panel
+        - Review Queue panel
+        - Watches panel (hidden when empty)
+        - Detail pane (collapsible, side or bottom)
+        - Command bar (pinned to bottom)
+      Use lipgloss.HasDarkBackground() for automatic theme selection.
+      Subscribe to the event bus (task 5) and translate DB events into
+      Bubble Tea commands/messages.
+    references:
+      - "VISION.md § 4 Wireframe Layout"
+      - "ARCHITECTURE.md § UI & Theming"
+      - "ARCHITECTURE.md § Directory Structure — ui/model.go"
+
+  - id: 15
+    title: Global keyboard navigation
+    status: pending
+    depends_on: [14]
+    description: >
+      Handle global key bindings in the root Update():
+        j/↓       move focus down within focused panel
+        k/↑       move focus up
+        Tab       cycle between panels (My PRs → Review Queue → Watches)
+        Enter     expand detail pane for focused PR
+        /  or :   focus command bar
+        Esc       dismiss overlay or unfocus command bar
+        o         open focused PR in browser
+        d         show diff for focused PR
+        a         approve focused PR (when in Review Queue)
+        r         open reviewer picker for focused PR
+        ?         toggle help overlay
+        q         quit
+        R         force reload (:reload)
+        D         toggle Do Not Disturb
+        p         toggle detail pane
+    references:
+      - "VISION.md § 5 Interaction Model — Keyboard Navigation"
+
+  # ─── Phase 6: Panels ─────────────────────────────────────────────────────────
+
+  - id: 16
+    title: Local session ID assignment
+    status: pending
+    depends_on: [4, 14]
+    description: >
+      At startup and on each reload, assign alphabetic session IDs (a, b, c …
+      z, aa, ab …) to every PR visible in My PRs and Review Queue, in display
+      order. Store mapping in the session_ids table (keyed by PR URL for
+      stability). Clear and reassign on :reload. IDs are used as fast command
+      bar references and displayed as the first column in both panels.
+    references:
+      - "VISION.md § 3.1 My Pull Requests — id column"
+      - "VISION.md § 5 Local Session IDs"
+
+  - id: 17
+    title: My Pull Requests panel (internal/ui/panel_prs.go)
+    status: pending
+    depends_on: [14, 16]
+    description: >
+      Render the My Pull Requests panel. Read PR rows from the DB. Columns:
+        id · 👁 · Repo · # · Title · Status · CI · Reviews · Comments · Age
+      Behaviors:
+        - Sort by staleness (longest idle time first).
+        - Highlight rows with failing CI or blocking reviews.
+        - Draft PRs dimmed / prefixed with [draft].
+        - Flash animation on any field change (via event bus message).
+        - Show 👁 icon when PR has one or more active watches.
+        - Show badge count "[N open]" in panel header.
+      Status values: draft, open, approved, changes requested, merge queued.
+      CI values: ✓ passing, ✗ failing, ⟳ running, — none.
+    references:
+      - "VISION.md § 3.1 My Pull Requests Panel"
+      - "ARCHITECTURE.md § Directory Structure — ui/panel_prs.go"
+
+  - id: 18
+    title: Review Queue panel (internal/ui/panel_reviews.go)
+    status: pending
+    depends_on: [14, 16]
+    description: >
+      Render the Review Queue panel. Read from DB. Columns:
+        id · 👁 · Repo · # · Title · Author · CI · Age · Urgency
+      Urgency formula (clamped to 1–3):
+        Base: <4h → 1, 4–24h → 2, >24h → 3
+        CI modifier: failing +1, passing -1, running/none ±0
+        Author wait >72h: +1
+      Urgency display: ●●● (3), ●●○ (2), ●○○ (1).
+      Sort by urgency descending.
+      Highlight PRs where user is the last required reviewer.
+      Highlight "ready to review" (CI passing, no blockers).
+      Show badge count "[N waiting]" in panel header.
+    references:
+      - "VISION.md § 3.2 Review Queue Panel"
+      - "ARCHITECTURE.md § Directory Structure — ui/panel_reviews.go"
+
+  - id: 19
+    title: Watches panel (internal/ui/panel_watches.go)
+    status: pending
+    depends_on: [14]
+    description: >
+      Render the Watches panel as the always-visible third panel. Read watch
+      rows from the DB. Columns:
+        id · Repo · # · Trigger · Action · Status
+      Status values: ⟳ waiting, ⟳ scheduled, ✓ fired, ✗ failed.
+      Behaviors:
+        - Rows flash briefly when a watch fires.
+        - Completed/failed watches remain visible briefly then fade out.
+        - Panel is hidden (collapsed) when there are no active watches.
+        - Show badge count "[N active]" in panel header.
+    references:
+      - "VISION.md § 3.4 Watches Panel"
+      - "ARCHITECTURE.md § Directory Structure — ui/panel_watches.go"
+
+  - id: 20
+    title: Detail / Preview pane (internal/ui/panel_detail.go)
+    status: pending
+    depends_on: [14]
+    description: >
+      Collapsible side or bottom pane for the focused PR. Toggled with Enter
+      or `p`. Contains:
+        - Full PR description rendered via Glamour (markdown).
+        - Check runs list (individual CI job names + states).
+        - Review thread summary (open vs resolved count).
+        - Active watches for this PR.
+        - Recent timeline events (commits, reviews, labels).
+      Inline thread navigation: n/N cycles through open review threads.
+      Implement "mark resolved" action on a thread without opening browser.
+      Use Bubbles viewport component for scrollable content.
+    references:
+      - "VISION.md § 3.3 Detail / Preview Pane"
+      - "VISION.md § 9.3 Inline Comment Thread Browser"
+      - "ARCHITECTURE.md § Technology Stack — Markdown: Glamour"
+
+  # ─── Phase 7: Command Bar ────────────────────────────────────────────────────
+
+  - id: 21
+    title: Command bar and autocomplete (internal/ui/command_bar.go)
+    status: pending
+    depends_on: [14, 16]
+    description: >
+      Persistent input bar pinned to the bottom. Activated with / or :
+      Features:
+        - Fuzzy command autocomplete as user types (go-fuzz or fzf-lib).
+        - After command selected, activate PR completion:
+            local session ID (a, b …), PR number (#42), or title fragment.
+          PR list filtered from visible panels.
+        - For :request, @ prefix triggers user autocomplete from repo collaborators
+          (fetched via REST API, cached).
+        - Tab accepts top suggestion; ↑/↓ navigates suggestion list.
+        - History navigation with ↑/↓ when suggestion list not active.
+        - Inline help hint showing command signature while typing.
+        - Esc unfocuses without executing.
+      Use Bubbles textinput component as the base.
+    references:
+      - "VISION.md § 3.5 Command Bar"
+      - "VISION.md § 5 Command Bar Autocomplete Behavior"
+      - "ARCHITECTURE.md § Technology Stack — Fuzzy Match"
+
+  # ─── Phase 8: Interactive Commands ───────────────────────────────────────────
+
+  - id: 22
+    title: Implement all interactive commands
+    status: pending
+    depends_on: [21, 9]
+    description: >
+      Wire up all commands listed in VISION.md §3.6. Each command resolves the
+      PR reference (session ID, #number, or title fragment) then calls the
+      appropriate REST mutation (task 9) or local action:
+        :open [#pr]              → open URL in default browser (open cmd)
+        :diff [#pr]              → invoke delta pager with PR diff
+        :approve [#pr]           → REST: submit approval review
+        :review [#pr]            → open inline compose view (body + submit)
+        :request [#pr] @user...  → REST: request reviewers
+        :ready [#pr]             → GraphQL mutation: mark ready for review
+        :draft [#pr]             → GraphQL mutation: convert to draft
+        :merge [#pr]             → REST: merge using repo's configured method
+        :watch [#pr] …           → delegate to Watch Engine (task 27)
+        :close [#pr]             → REST: close PR
+        :reopen [#pr]            → REST: reopen PR
+        :label [#pr] [label]     → REST: add/remove label
+        :comment [#pr]           → open inline editor, post comment
+        :dnd [duration]          → toggle DND mode (task 29)
+        :wake                    → resume normal polling (task 13)
+        :reload                  → force immediate poll
+        :help                    → show help overlay
+        :quit / q                → exit
+      All commands are immediately acted upon with no confirmation prompt.
+    references:
+      - "VISION.md § 3.6 Interactive Commands"
+
+  - id: 23
+    title: Diff viewer integration (internal/diff)
+    status: pending
+    depends_on: [6]
+    description: >
+      Implement :diff by fetching the PR diff via GitHub REST API
+      (Accept: application/vnd.github.diff) and piping it to the `delta`
+      pager subprocess. Suspend the Bubble Tea TUI while delta is running,
+      then resume on pager exit. Handle missing delta binary gracefully
+      (fall back to raw diff or show install instructions).
+    references:
+      - "ARCHITECTURE.md § Technology Stack — Diff Viewer: delta"
+      - "VISION.md § 3.6 :diff command"
+
+  # ─── Phase 9: Audit Log ──────────────────────────────────────────────────────
+
+  - id: 24
+    title: Audit log (internal/persistence or internal/audit)
+    status: pending
+    depends_on: [1]
+    description: >
+      Append an entry to ~/.local/share/argh/audit.log for every action argh
+      takes: approve, merge, request, comment, label, watch execution, etc.
+      Format: ISO-8601 timestamp, action type, repo, PR number, details.
+      Create parent directory on first run. This is called from every mutation
+      path (task 9) and every watch action execution (task 28).
+    references:
+      - "VISION.md § 3.6 — every action recorded in audit log"
+      - "VISION.md § 9.5 Audit Log"
+
+  # ─── Phase 10: Watch Engine ──────────────────────────────────────────────────
+
+  - id: 25
+    title: Watch trigger parser
+    status: pending
+    depends_on: [1]
+    description: >
+      Parse the trigger expression syntax from VISION.md §3.7:
+        on:approved+ci         (AND: approved AND ci-pass)
+        on:ci-pass,approved    (OR: ci-pass OR approved)
+        on:24h-stale           (time-based)
+      Supported trigger atoms:
+        ci-pass, ci-fail, approved (optionally approved:N for N approvals),
+        all-threads-resolved, ready-for-review, label-added:<name>,
+        label-removed:<name>, <Nh>-stale.
+      Return a structured AST that the Watch Engine can evaluate against
+      a PR snapshot from the DB.
+    references:
+      - "VISION.md § 3.7 Watch — Trigger types, Trigger Syntax"
+
+  - id: 26
+    title: Watch action parser
+    status: pending
+    depends_on: [1]
+    description: >
+      Parse action expressions into typed action structs:
+        merge[:method]        (squash, merge, rebase — defaults to repo setting)
+        merge:squash
+        ready                 (mark draft ready for review)
+        request:@user         (request review)
+        comment:<text>
+        label:<name>
+        notify                (desktop notification)
+      Actions can be combined: e.g., `comment + notify`.
+    references:
+      - "VISION.md § 3.7 Watch — Action types"
+
+  - id: 27
+    title: Watch management commands
+    status: pending
+    depends_on: [25, 26, 4, 21]
+    description: >
+      Implement :watch sub-commands wired through the command bar:
+        :watch [#pr] <trigger> <action>  → parse trigger + action, write watch
+                                           row to DB with status=waiting
+        :watch list                      → show all active watches (also shown
+                                           in Watches panel)
+        :watch cancel [id]               → delete or mark cancelled in DB
+      Watches persist across restarts in the watches table (keyed by PR URL,
+      mapped to ephemeral session IDs at runtime).
+    references:
+      - "VISION.md § 3.7 Watch — Queue Management"
+      - "VISION.md § 6 Watches — persistence in watches.yaml"
+        note: >
+          Architecture stores in SQLite; VISION.md mentions watches.yaml as the
+          persistence format. Reconcile: store canonical data in SQLite and
+          optionally export/import from ~/.config/argh/watches.yaml on startup/shutdown.
+
+  - id: 28
+    title: Watch Engine goroutine (internal/watches)
+    status: pending
+    depends_on: [5, 25, 26, 9, 24]
+    description: >
+      Run an independent goroutine that subscribes to the DB event bus (task 5).
+      On each PR_UPDATED event, load all watches for that PR and evaluate each
+      trigger against the current PR state snapshot. If a trigger condition is
+      met, execute the corresponding action(s) via the API client (task 9),
+      update the watch row status to "fired" or "failed", append to audit log
+      (task 24), and fire a WATCH_FIRED event on the bus. For time-based triggers
+      (Nh-stale), maintain an internal timer per watch. Emit bus events on fire
+      so the Watches panel can animate.
+    references:
+      - "VISION.md § 3.7 Watch — Watch Engine"
+      - "ARCHITECTURE.md § High-Level Architecture — Watch Engine goroutine"
+
+  # ─── Phase 11: Notification System ──────────────────────────────────────────
+
+  - id: 29
+    title: In-app visual notifications
+    status: pending
+    depends_on: [14, 5]
+    description: >
+      Subscribe to DB events (task 5) in the UI model. For each high-signal
+      event (CI change, review change, PR state change), trigger:
+        - Row flash/highlight animation on the affected row in My PRs or
+          Review Queue panel.
+        - Badge counter update in panel headers.
+        - Status bar update: "● #42 approved by @alice — 10s ago".
+      Color coding: green (approved/passing), red (failing/changes requested),
+      yellow (pending/waiting), blue (info).
+    references:
+      - "VISION.md § 7 In-App Visual Notifications"
+
+  - id: 30
+    title: macOS system notifications (internal/notify)
+    status: pending
+    depends_on: [3, 5]
+    description: >
+      Implement macOS Notification Center dispatch using gen2brain/beeep or
+      deckarep/gosx-notifier (no external runtime dependency). Subscribe to
+      DB events. Fire system notifications for:
+        - CI: running → passing or failing
+        - Review approval received
+        - Review with changes requested
+        - PR merged or closed
+        - You are requested as a reviewer on a new PR
+        - Watch action executed
+      Respect the per-event config flags (notifications: section of config.yaml).
+      Skip all system notifications when DND is active (task 31).
+    references:
+      - "VISION.md § 7 System Notifications"
+      - "ARCHITECTURE.md § Technology Stack — Notifications"
+
+  - id: 31
+    title: Notification deduplication and debouncing
+    status: pending
+    depends_on: [30]
+    description: >
+      Debounce notification dispatch with a 5-second window: if the same
+      notification would fire again within 5s, drop the duplicate.
+      Collapse CI flapping (pass→fail→pass within 60s) into a single
+      notification. Track in-memory state per (pr_url, event_type) key.
+    references:
+      - "VISION.md § 7 Notification Deduplication"
+
+  - id: 32
+    title: Do Not Disturb mode (VISION.md §9.6)
+    status: pending
+    depends_on: [3, 30, 14]
+    description: >
+      Implement DND as a runtime flag in the notifier. When active, suppress
+      all system notifications (task 30) while in-app visuals continue normally.
+      Toggle with :dnd command or D key. Timed DND: :dnd 2h sets a timer that
+      re-enables notifications after the duration. Implement scheduled DND from
+      config (do_not_disturb.schedule windows — same shape as sleep_schedule).
+      Status bar shows "🔕 DND" when active.
+    references:
+      - "VISION.md § 9.6 Do Not Disturb Mode"
+      - "VISION.md § 3.6 :dnd command"
+
+  # ─── Phase 12: Additional Features ──────────────────────────────────────────
+
+  - id: 33
+    title: "argh --status: tmux/prompt status bar mode"
+    status: pending
+    depends_on: [4]
+    description: >
+      Add a --status CLI flag. When passed, read the current PR state from the
+      SQLite DB (does not start the TUI or poll), print a single condensed line
+      to stdout, and exit:
+        ↑3 PRs  ✗1 CI  ↓2 review
+      Handle gracefully when DB does not exist or is stale (print last-known
+      state with a staleness indicator). Intended for embedding in tmux
+      status-right or shell prompt via command substitution.
+    references:
+      - "VISION.md § 9.1 PR Status Bar Overlay"
+
+  - id: 34
+    title: Smart review assignment suggestions (VISION.md §9.2)
+    status: pending
+    depends_on: [9, 21]
+    description: >
+      When :request #pr is invoked without explicit @users, show a ranked
+      suggestion list using up to three signals (all optional, degrade gracefully):
+        1. git blame on local repo (if available) — who owns most changed lines.
+        2. GitHub API: who reviewed similar PRs recently.
+        3. GitHub API: CODEOWNERS rules for changed files.
+      Combine signals into a ranked list, de-duplicate. User selects from the
+      list before the request is sent.
+    references:
+      - "VISION.md § 9.2 Smart Review Assignment"
+
+  - id: 35
+    title: Per-repo configuration (.argh.yaml)
+    status: pending
+    depends_on: [3]
+    description: >
+      When argh is run inside a git repo (or when a PR action targets a repo),
+      look for .argh.yaml in the repo root (fetched via GitHub API, not local fs).
+      If found, parse and apply overrides:
+        - default_reviewers: list of logins
+        - label_conventions: map of shorthand → full label name
+        - merge_strategy: squash | merge | rebase
+      Repo-level config takes precedence over global config for the relevant repo.
+    references:
+      - "VISION.md § 9.4 Per-Repo Configuration"
+
+  # ─── Phase 13: Distribution & CI/CD ─────────────────────────────────────────
+
+  - id: 36
+    title: goreleaser configuration and cross-compilation
+    status: pending
+    depends_on: [1]
+    description: >
+      Add .goreleaser.yaml targeting macOS arm64 and amd64. Embed version from
+      git tag at build time (ldflags). Configure GitHub Releases artifact upload.
+      Include SHA256 checksums. Validate with `goreleaser check`.
+    references:
+      - "ARCHITECTURE.md § Build & Release — goreleaser"
+
+  - id: 37
+    title: GitHub Actions CI/CD workflow
+    status: pending
+    depends_on: [36]
+    description: >
+      Create .github/workflows/ with:
+        - ci.yml: runs on push/PR — `go test ./...`, `go vet`, staticcheck.
+        - release.yml: triggers on tag push (v*) — runs goreleaser, uploads
+          binaries to GitHub Releases.
+      Include version number from tag in the binary via ldflags.
+    references:
+      - "ARCHITECTURE.md § Build & Release — GitHub Actions"
+
+  - id: 38
+    title: Homebrew tap formula
+    status: pending
+    depends_on: [37]
+    description: >
+      After a release is published, update the Homebrew formula in the
+      evanisnor/homebrew-tap repository
+      (~/Code/github.com/evanisnor/homebrew-tap). Formula should:
+        - Reference the GitHub Release binary URLs for arm64 and amd64.
+        - Declare runtime dependencies on `gh` and `git-delta`.
+        - Include a post-install caveats message guiding through `gh auth login`.
+      Automate formula SHA256 update as a step in the release workflow.
+    references:
+      - "ARCHITECTURE.md § Distribution & Dependencies — Homebrew Formula"
+      - "ARCHITECTURE.md § Installation Flow"
+
+  - id: 39
+    title: Brewfile
+    status: pending
+    depends_on: [1]
+    description: >
+      Create Brewfile at the repo root declaring runtime dependencies:
+        tap "evanisnor/tap"
+        brew "gh"
+        brew "dandavison/delta/git-delta"
+        brew "evanisnor/tap/argh"   # once published
+      This allows `brew bundle` to install everything in one step.
+    references:
+      - "ARCHITECTURE.md § Distribution & Dependencies — Brewfile"
