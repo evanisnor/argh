@@ -930,7 +930,7 @@ tasks:
 
   - id: 38
     title: Homebrew tap formula
-    status: pending
+    status: done
     depends_on: [37]
     description: >
       After a release is published, update the Homebrew formula in the

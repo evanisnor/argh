@@ -50,6 +50,30 @@ release:
   prerelease: auto
   name_template: "v{{ .Version }}"
 
+brews:
+  - name: argh
+    repository:
+      owner: evanisnor
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/evanisnor/argh"
+    description: "A GitHub PR dashboard for the macOS terminal"
+    license: "MIT"
+    dependencies:
+      - name: gh
+      - name: "dandavison/delta/git-delta"
+    caveats: |
+      To get started with argh, authenticate with GitHub:
+        gh auth login
+
+      Then launch the dashboard:
+        argh
+    install: |
+      bin.install "argh"
+    test: |
+      system "#{bin}/argh", "--version"
+
 changelog:
   sort: asc
   filters:
