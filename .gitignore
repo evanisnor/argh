@@ -1,1 +1,5 @@
 .autoclaude
+**/coverage_*.out
+dist
+argh
+**/coverage.out
