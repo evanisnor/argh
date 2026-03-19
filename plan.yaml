@@ -913,7 +913,7 @@ tasks:
 
   - id: 37
     title: GitHub Actions CI/CD workflow
-    status: pending
+    status: done
     depends_on: [36]
     description: >
       Create .github/workflows/ with:
