@@ -348,6 +348,89 @@ func (s *StubRateLimitReader) SetRemaining(remaining int) {
 	s.state.Remaining = remaining
 }
 
+// ── Clock / Sleep stubs ───────────────────────────────────────────────────────
+
+// FakeClock is a controllable Clock for tests. Call Set to advance time.
+type FakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+// NewFakeClock returns a FakeClock initialised to t.
+func NewFakeClock(t time.Time) *FakeClock {
+	return &FakeClock{now: t}
+}
+
+// Now returns the current fake time (thread-safe).
+func (f *FakeClock) Now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.now
+}
+
+// Set updates the fake clock to t (thread-safe).
+func (f *FakeClock) Set(t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.now = t
+}
+
+// StubSleepScheduleChecker is a thread-safe test double for SleepScheduleChecker.
+type StubSleepScheduleChecker struct {
+	mu            sync.RWMutex
+	inSleepWindow bool
+	sleepInterval time.Duration
+	wakeCalled    bool
+}
+
+// NewStubSleepScheduleChecker returns a StubSleepScheduleChecker that is
+// never in a sleep window and has a 5-minute sleep interval by default.
+func NewStubSleepScheduleChecker() *StubSleepScheduleChecker {
+	return &StubSleepScheduleChecker{sleepInterval: 5 * time.Minute}
+}
+
+// IsInSleepWindow returns the configured in-sleep-window state (thread-safe).
+func (s *StubSleepScheduleChecker) IsInSleepWindow() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.inSleepWindow
+}
+
+// SleepInterval returns the configured sleep interval (thread-safe).
+func (s *StubSleepScheduleChecker) SleepInterval() time.Duration {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sleepInterval
+}
+
+// Wake records that Wake was called (thread-safe).
+func (s *StubSleepScheduleChecker) Wake() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.wakeCalled = true
+}
+
+// SetInSleepWindow updates the in-sleep-window state (thread-safe).
+func (s *StubSleepScheduleChecker) SetInSleepWindow(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inSleepWindow = v
+}
+
+// SetSleepInterval updates the sleep interval (thread-safe).
+func (s *StubSleepScheduleChecker) SetSleepInterval(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sleepInterval = d
+}
+
+// WasWakeCalled reports whether Wake was called (thread-safe).
+func (s *StubSleepScheduleChecker) WasWakeCalled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.wakeCalled
+}
+
 // StubFetcher is a test double for Fetcher.
 // FetchFunc is called by Fetch; it is set before the poller starts so there
 // is no write race on the field itself.

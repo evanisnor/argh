@@ -321,3 +321,176 @@ func TestRealTicker_Methods(t *testing.T) {
 	rt.Reset(time.Hour)
 	rt.Stop()
 }
+
+// ── Sleep schedule integration ────────────────────────────────────────────────
+
+func TestPoller_SleepSchedule_InitialInterval_WhenActive(t *testing.T) {
+	sleepChecker := NewStubSleepScheduleChecker()
+	sleepChecker.SetInSleepWindow(true)
+	sleepInterval := 100 * time.Millisecond
+	sleepChecker.SetSleepInterval(sleepInterval)
+
+	rl := NewStubRateLimitReader(5000)
+	base := 10 * time.Millisecond
+
+	capturedDur := make(chan time.Duration, 1)
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), rl, base, func(d time.Duration) Ticker {
+		capturedDur <- d
+		return NewFakeTicker(d)
+	})
+	p.SetSleepSchedule(sleepChecker)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := p.Start(ctx)
+	defer func() { cancel(); <-done }()
+
+	select {
+	case d := <-capturedDur:
+		if d != sleepInterval {
+			t.Errorf("initial ticker interval = %v, want sleep interval %v", d, sleepInterval)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+}
+
+func TestPoller_SleepSchedule_InitialInterval_WhenInactive(t *testing.T) {
+	sleepChecker := NewStubSleepScheduleChecker()
+	sleepChecker.SetInSleepWindow(false)
+
+	rl := NewStubRateLimitReader(5000) // multiplier = 1
+	base := 10 * time.Millisecond
+
+	capturedDur := make(chan time.Duration, 1)
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), rl, base, func(d time.Duration) Ticker {
+		capturedDur <- d
+		return NewFakeTicker(d)
+	})
+	p.SetSleepSchedule(sleepChecker)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := p.Start(ctx)
+	defer func() { cancel(); <-done }()
+
+	select {
+	case d := <-capturedDur:
+		if d != base {
+			t.Errorf("initial ticker interval = %v, want base interval %v", d, base)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+}
+
+func TestPoller_SleepSchedule_TickerReset_WhenWindowActivates(t *testing.T) {
+	sleepChecker := NewStubSleepScheduleChecker()
+	sleepChecker.SetInSleepWindow(false)
+	sleepInterval := 200 * time.Millisecond
+	sleepChecker.SetSleepInterval(sleepInterval)
+
+	rl := NewStubRateLimitReader(5000)
+
+	_, cancel, fakeTicker, done := startPoller(t, NewStubFetcher(), NewStubFetcher(), rl, 10*time.Millisecond)
+	// Note: startPoller doesn't set a sleep checker, so we can't use it here.
+	// Use the inline construction instead.
+	cancel()
+	<-done
+
+	// Rebuild with sleep checker.
+	tickerCh := make(chan *FakeTicker, 1)
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), rl, 10*time.Millisecond, func(d time.Duration) Ticker {
+		ft := NewFakeTicker(d)
+		tickerCh <- ft
+		return ft
+	})
+	p.SetSleepSchedule(sleepChecker)
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := p.Start(ctx2)
+	defer func() { cancel2(); <-done2 }()
+
+	select {
+	case fakeTicker = <-tickerCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+
+	// Activate sleep window and fire a tick.
+	sleepChecker.SetInSleepWindow(true)
+	fakeTicker.Tick()
+
+	select {
+	case d := <-fakeTicker.ResetCh:
+		if d != sleepInterval {
+			t.Errorf("ticker reset to %v, want sleep interval %v", d, sleepInterval)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("ticker was not reset after sleep window activated")
+	}
+}
+
+func TestPoller_SleepSchedule_FetchStillCalled_WhenInSleepWindow(t *testing.T) {
+	sleepChecker := NewStubSleepScheduleChecker()
+	sleepChecker.SetInSleepWindow(true)
+	sleepChecker.SetSleepInterval(time.Second)
+
+	calls := make(chan string, 10)
+	myPRs := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		calls <- "myPRs"
+		return nil
+	}}
+	reviewQueue := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		calls <- "reviewQueue"
+		return nil
+	}}
+
+	rl := NewStubRateLimitReader(5000)
+	tickerCh := make(chan *FakeTicker, 1)
+	p := NewPoller(myPRs, reviewQueue, rl, 10*time.Millisecond, func(d time.Duration) Ticker {
+		ft := NewFakeTicker(d)
+		tickerCh <- ft
+		return ft
+	})
+	p.SetSleepSchedule(sleepChecker)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := p.Start(ctx)
+	defer func() { cancel(); <-done }()
+
+	var fakeTicker *FakeTicker
+	select {
+	case fakeTicker = <-tickerCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+
+	fakeTicker.Tick()
+
+	received := map[string]bool{}
+	timeout := time.After(200 * time.Millisecond)
+	for len(received) < 2 {
+		select {
+		case name := <-calls:
+			received[name] = true
+		case <-timeout:
+			t.Fatalf("fetchers called: %v; expected both even during sleep window", received)
+		}
+	}
+}
+
+func TestPoller_Wake_NilSleepChecker(t *testing.T) {
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), NewStubRateLimitReader(5000), time.Second,
+		func(d time.Duration) Ticker { return NewFakeTicker(d) })
+	p.Wake() // must not panic with nil sleepChecker
+}
+
+func TestPoller_Wake_NonNilSleepChecker(t *testing.T) {
+	stub := NewStubSleepScheduleChecker()
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), NewStubRateLimitReader(5000), time.Second,
+		func(d time.Duration) Ticker { return NewFakeTicker(d) })
+	p.SetSleepSchedule(stub)
+	p.Wake()
+	if !stub.WasWakeCalled() {
+		t.Error("expected Wake to be called on sleep checker")
+	}
+}

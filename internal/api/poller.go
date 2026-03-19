@@ -50,6 +50,7 @@ type Poller struct {
 	baseInterval time.Duration
 	newTicker    NewTickerFunc
 	forcePoll    chan struct{}
+	sleepChecker SleepScheduleChecker
 }
 
 // NewPoller constructs a Poller.
@@ -74,6 +75,19 @@ func NewPoller(
 // an immediate fetch regardless of the tick interval or rate-limit state.
 func (p *Poller) ForcePollCh() chan<- struct{} {
 	return p.forcePoll
+}
+
+// SetSleepSchedule configures an optional sleep schedule. Must be called
+// before Start.
+func (p *Poller) SetSleepSchedule(checker SleepScheduleChecker) {
+	p.sleepChecker = checker
+}
+
+// Wake immediately resumes normal polling, overriding any active sleep window.
+func (p *Poller) Wake() {
+	if p.sleepChecker != nil {
+		p.sleepChecker.Wake()
+	}
 }
 
 // Start launches the polling goroutine. The returned channel is closed when
@@ -113,10 +127,13 @@ func (p *Poller) run(ctx context.Context) {
 }
 
 // pollState computes the effective tick interval and whether to call the fetchers.
-// When rate-limit quota is critically low (multiplier == 0), polling is paused
-// but the ticker continues at baseInterval so the loop can re-evaluate once
-// the quota recovers.
+// Sleep schedule takes priority over rate-limit back-off. When rate-limit quota
+// is critically low (multiplier == 0), polling is paused but the ticker
+// continues at baseInterval so the loop can re-evaluate once quota recovers.
 func (p *Poller) pollState() (interval time.Duration, fetch bool) {
+	if p.sleepChecker != nil && p.sleepChecker.IsInSleepWindow() {
+		return p.sleepChecker.SleepInterval(), true
+	}
 	multiplier := IntervalMultiplier(p.rateLimits.CurrentState().Remaining)
 	if multiplier <= 0 {
 		return p.baseInterval, false
