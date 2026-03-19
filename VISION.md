@@ -13,7 +13,7 @@
 3. [Feature Specification](#3-feature-specification)
 4. [Wireframe Layout](#4-wireframe-layout)
 5. [Interaction Model & Commands](#5-interaction-model--commands)
-6. [Automation Queue](#6-automation-queue)
+6. [Watches](#6-watches)
 7. [Notification System](#7-notification-system)
 8. [Technical Architecture](#8-technical-architecture)
 9. [Distribution & Dependencies](#9-distribution--dependencies)
@@ -26,7 +26,7 @@
 ### Goals
 - Give engineers a **real-time global pull request command center** in the terminal, aggregating PRs from **all repositories**.
 - Surface the **right information at the right time** — eliminate context switching to the GitHub web UI.
-- Enable **watched automations** that trigger actions on PR state changes via the automation queue.
+- Enable **watches** that trigger actions on PR state changes.
 - **Grab attention visually and via system notifications** when PR state changes (CI passes/fails, review requested, approved, etc.).
 - Stay **composable** with existing `gh` CLI workflows.
 
@@ -59,7 +59,7 @@ Displays all non-closed pull requests authored by the current user across **all 
 | Field | Description |
 |---|---|
 | `id` | Short local session ID (e.g. `a`, `b`, `c`) — for fast command bar reference |
-| 👁 | Eye icon shown when the PR has active automation queue watches |
+| 👁 | Eye icon shown when the PR has active watches |
 | Repo | Repository name (e.g. `owner/repo`) |
 | `#` | PR number (linkable) |
 | Title | PR title, truncated to available width |
@@ -74,7 +74,7 @@ Displays all non-closed pull requests authored by the current user across **all 
 - Rows with failing CI or blocking reviews are visually highlighted.
 - Draft PRs are visually distinct (dimmed or prefixed with `[draft]`).
 - Rows animate or flash briefly when any field changes.
-- PRs with one or more active automation queue entries show a `👁` icon to the left of the title.
+- PRs with one or more active watches show a `👁` icon to the left of the title.
 
 ---
 
@@ -86,7 +86,7 @@ Displays pull requests where the current user is assigned as a reviewer, or is m
 | Field | Description |
 |---|---|
 | `id` | Short local session ID (e.g. `a`, `b`, `c`) — for fast command bar reference |
-| 👁 | Eye icon shown when the PR has active automation queue watches |
+| 👁 | Eye icon shown when the PR has active watches |
 | Repo | Repository name |
 | `#` | PR number |
 | Title | PR title |
@@ -110,19 +110,19 @@ A collapsible side or bottom pane showing extended details for the focused PR.
 - Full PR description (rendered markdown via Glamour)
 - Check runs list with individual CI job names and states
 - Review thread summary (open threads, resolved threads)
-- Automation queue entries for this PR
+- Active watches for this PR
 - Recent timeline events (commits pushed, reviews submitted, labels added)
 
 ---
 
-### 3.4 Automation Queue Panel
+### 3.4 Watches Panel
 
 Always-visible third panel below the Review Queue. Shows all active watches across all PRs.
 
 **Columns:**
 | Field | Description |
 |---|---|
-| `id` | Watch entry ID — for use with `:watch cancel [id]` |
+| `id` | Watch ID — for use with `:watch cancel [id]` |
 | `#` | PR number the watch applies to |
 | Trigger | The condition being waited on (e.g. `on:approved+ci`, `on:ci-pass`) |
 | Action | What will happen when the trigger fires |
@@ -131,7 +131,7 @@ Always-visible third panel below the Review Queue. Shows all active watches acro
 **Behaviors:**
 - Rows flash briefly when a watch fires.
 - Completed or failed watches remain visible briefly then fade out.
-- Panel is hidden (collapsed) when the queue is empty.
+- Panel is hidden (collapsed) when there are no active watches.
 
 ---
 
@@ -161,7 +161,7 @@ A persistent horizontal input bar pinned to the bottom of the screen.
 | `:ready [#pr]` | Mark draft PR as ready for review |
 | `:draft [#pr]` | Convert PR back to draft |
 | `:merge [#pr]` | Merge PR using the repo's configured merge method |
-| `:watch [#pr]` | Add PR to automation queue |
+| `:watch [#pr]` | Add watch for PR |
 | `:close [#pr]` | Close PR without merging |
 | `:reopen [#pr]` | Reopen a closed PR |
 | `:label [#pr] [label]` | Add or remove a label |
@@ -197,17 +197,17 @@ A rule-based engine that watches PR state and triggers actions automatically or 
 - Desktop notification
 
 **Queue Management:**
-- `:watch [#pr] on:approved merge:squash` — queue a merge action when approved
+- `:watch [#pr] on:approved merge:squash` — create a merge watch when approved
 - `:watch [#pr] on:ci-pass ready` — mark ready when CI passes
-- `:watch list` — show all pending automation entries
-- `:watch cancel [id]` — cancel a queued automation
-- Queued rules persist across restarts (stored in `~/.config/argh/queue.yaml`). Persistence uses stable PR URLs or global IDs, mapped back to ephemeral session IDs at runtime.
+- `:watch list` — show all active watches
+- `:watch cancel [id]` — cancel an active watch
+- Active watches persist across restarts (stored in `~/.config/argh/watches.yaml`). Persistence uses stable PR URLs or global IDs, mapped back to ephemeral session IDs at runtime.
 
 ---
 
 ## 4. Wireframe Layout
 
-Three panels stack vertically: **My Pull Requests**, **Review Queue**, and **Automation Queue**. The command bar is pinned to the bottom.
+Three panels stack vertically: **My Pull Requests**, **Review Queue**, and **Watches**. The command bar is pinned to the bottom.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -228,7 +228,7 @@ Three panels stack vertically: **My Pull Requests**, **Review Queue**, and **Aut
 │  d │   │ oss/library  │ 55 │ chore: bump deps       │ @carol   │ ✓  │ ●●●│
 │  e │   │ work/ui      │ 51 │ feat: dark mode        │ @dave    │ ⟳  │ ●●○│
 ├──────────────────────────────────────────────────────────────────────────┤
-│  AUTOMATION QUEUE                                              [3 active] │
+│  WATCHES                                                       [3 active] │
 ├──────┬──────────────┬────┬───────────────────┬───────────────────┬───────┤
 │  id  │ Repo         │ #  │ Trigger           │ Action            │ Status│
 ├──────┼──────────────┼────┼───────────────────┼───────────────────┼───────┤
@@ -289,9 +289,9 @@ Local IDs also accept PR numbers (`#42`) and fuzzy title fragments as fallbacks,
 
 ---
 
-## 6. Automation Queue
+## 6. Watches
 
-Watches are created interactively via the `:watch` command and persisted in `~/.config/argh/queue.yaml`. No rules DSL or config file editing required. The Automation Queue panel is always visible in the main UI as the third panel.
+Watches are created interactively via the `:watch` command and persisted in `~/.config/argh/watches.yaml`. No rules DSL or config file editing required. The Watches panel is always visible in the main UI as the third panel.
 
 ---
 
@@ -324,7 +324,7 @@ notifications:
   changes_requested: true
   review_requested: true
   merged: true
-  automation_triggered: false
+  watch_triggered: false
 ```
 
 ### Notification Deduplication
@@ -367,7 +367,7 @@ Events are debounced with a 5s window. Repeated state flapping (CI pass→fail�
 │              (10s default)            │  Model/View    │    │
 │                                       └────────────────┘    │
 │   ┌──────────────┐                            │             │
-│   │  Automation  │◄───────────────────────────┘             │
+│   │  Watch       │◄───────────────────────────┘             │
 │   │  Engine      │─── actions ──► Native API calls          │
 │   └──────────────┘                                          │
 │                                                             │
@@ -389,7 +389,7 @@ argh/
 │   ├── api/           # GitHub GraphQL + REST client
 │   ├── model/         # Bubble Tea model + update logic
 │   ├── view/          # Rendering functions (panels, command bar, overlays)
-│   ├── automation/    # Rule engine, queue, action executor
+│   ├── watches/       # Watch engine, queue, action executor
 │   ├── notify/        # OS notification dispatch (macOS)
 │   ├── config/        # Config loading, defaults
 │   ├── persistence/   # Reactive cache layer (SQLite)
@@ -561,10 +561,10 @@ In the detail pane, navigate through open review threads with `n`/`N`. Mark thre
 Support a `.argh.yaml` in the repo root for repo-specific overrides: default reviewers, label conventions, merge strategy preference.
 
 ### 10.5 Audit Log
-Every action `argh` takes (approve, merge, request, comment) is appended to `~/.local/share/argh/audit.log` with timestamp and PR number. Makes it easy to understand what the automation did.
+Every action `argh` takes (approve, merge, request, comment) is appended to `~/.local/share/argh/audit.log` with timestamp and PR number. Makes it easy to understand what the watch did.
 
 ### 10.6 Do Not Disturb Mode
-Suppress all system notifications without stopping polling or automation. Useful during deep work, meetings, or outside working hours.
+Suppress all system notifications without stopping polling or watches. Useful during deep work, meetings, or outside working hours.
 
 - Toggle with `:dnd` or the keyboard shortcut `D` — status bar shows `🔕 DND` when active
 - Timed DND: `:dnd 2h` re-enables notifications automatically after the specified duration
