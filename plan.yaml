@@ -642,7 +642,7 @@ tasks:
 
   - id: 26
     title: Watch action parser
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Parse action expressions into typed action structs:
