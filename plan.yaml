@@ -849,7 +849,7 @@ tasks:
 
   - id: 35
     title: Per-repo configuration (.argh.yaml)
-    status: pending
+    status: done
     depends_on: [3]
     description: >
       When argh is run inside a git repo (or when a PR action targets a repo),
