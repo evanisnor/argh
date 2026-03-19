@@ -589,7 +589,7 @@ tasks:
 
   - id: 24
     title: Audit log (internal/audit)
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Append an entry to ~/.local/share/argh/audit.log for every action argh
