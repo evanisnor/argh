@@ -251,7 +251,7 @@ tasks:
 
   - id: 11
     title: ETag / conditional request caching for REST endpoints
-    status: pending
+    status: done
     depends_on: [9]
     description: >
       For REST endpoints used in polling (PR details, check runs), store the

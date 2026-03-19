@@ -218,6 +218,34 @@ func (s *StubGraphQLMutator) Mutate(ctx context.Context, m interface{}, input gi
 	return s.MutateFunc(ctx, m, input, variables)
 }
 
+// ── ETag stubs ────────────────────────────────────────────────────────────────
+
+// StubETagStore is a test double for ETagStore.
+type StubETagStore struct {
+	GetETagFunc  func(url string) (persistence.ETag, error)
+	UpsertETagFunc func(e persistence.ETag) error
+
+	UpsertedETags []persistence.ETag
+}
+
+// NewStubETagStore returns a StubETagStore whose default GetETag returns
+// sql.ErrNoRows (no cached entry) and whose default UpsertETag succeeds.
+func NewStubETagStore() *StubETagStore {
+	return &StubETagStore{
+		GetETagFunc:  func(_ string) (persistence.ETag, error) { return persistence.ETag{}, sql.ErrNoRows },
+		UpsertETagFunc: func(_ persistence.ETag) error { return nil },
+	}
+}
+
+func (s *StubETagStore) GetETag(url string) (persistence.ETag, error) {
+	return s.GetETagFunc(url)
+}
+
+func (s *StubETagStore) UpsertETag(e persistence.ETag) error {
+	s.UpsertedETags = append(s.UpsertedETags, e)
+	return s.UpsertETagFunc(e)
+}
+
 // StubAuditLogger is a test double for AuditLogger that records all log calls.
 type StubAuditLogger struct {
 	Entries []AuditEntry
