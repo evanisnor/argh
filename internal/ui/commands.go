@@ -57,9 +57,11 @@ type DNDController interface {
 	Wake() error
 }
 
-// WatchEngine registers a watch for a pull request (task 27 — stub for now).
+// WatchEngine manages watches for pull requests.
 type WatchEngine interface {
-	AddWatch(repo string, number int, triggerExpr, actionExpr string) error
+	AddWatch(repo string, number int, prURL string, triggerExpr, actionExpr string) error
+	ListWatches() ([]persistence.Watch, error)
+	CancelWatch(id string) error
 }
 
 // HelpOverlay shows the help overlay (task 40 — stub for now).
@@ -467,25 +469,71 @@ func (e *CommandExecutor) execCompose(args []string, cmdName string, onSubmit fu
 	}
 }
 
-// execWatch handles :watch [#pr] <trigger> <action>
+// execWatch dispatches :watch sub-commands:
+//
+//	:watch [#pr] <trigger> <action>  — add a watch
+//	:watch list                      — list active (non-cancelled) watches
+//	:watch cancel <id>               — cancel a watch by ID
 func (e *CommandExecutor) execWatch(args []string) tea.Cmd {
-	return func() tea.Msg {
-		if len(args) < 3 {
-			return CommandResultMsg{Err: fmt.Errorf(":watch: usage: :watch [#pr] <trigger> <action>")}
-		}
-		pr, err := e.resolvePR(args[0])
-		if err != nil {
-			return CommandResultMsg{Err: err}
-		}
-		trigger := args[1]
-		action := args[2]
-		if e.watches == nil {
+	if e.watches == nil {
+		return func() tea.Msg {
 			return CommandResultMsg{Err: fmt.Errorf(":watch: no watch engine configured")}
 		}
-		if err := e.watches.AddWatch(pr.Repo, pr.Number, trigger, action); err != nil {
-			return CommandResultMsg{Err: err}
+	}
+	if len(args) == 0 {
+		return func() tea.Msg {
+			return CommandResultMsg{Err: fmt.Errorf(":watch: usage: :watch [#pr] <trigger> <action> | :watch list | :watch cancel <id>")}
 		}
-		return CommandResultMsg{Status: fmt.Sprintf("watch added for %s#%d", pr.Repo, pr.Number)}
+	}
+	switch args[0] {
+	case "list":
+		return func() tea.Msg {
+			watches, err := e.watches.ListWatches()
+			if err != nil {
+				return CommandResultMsg{Err: err}
+			}
+			if len(watches) == 0 {
+				return CommandResultMsg{Status: "no active watches"}
+			}
+			lines := make([]string, len(watches))
+			for i, w := range watches {
+				lines[i] = fmt.Sprintf("[%s] %s#%d  trigger:%s  action:%s  status:%s",
+					w.ID, w.Repo, w.PRNumber, w.TriggerExpr, w.ActionExpr, w.Status)
+			}
+			return CommandResultMsg{Status: strings.Join(lines, "\n")}
+		}
+	case "cancel":
+		if len(args) < 2 {
+			return func() tea.Msg {
+				return CommandResultMsg{Err: fmt.Errorf(":watch cancel: usage: :watch cancel <id>")}
+			}
+		}
+		id := args[1]
+		return func() tea.Msg {
+			if err := e.watches.CancelWatch(id); err != nil {
+				return CommandResultMsg{Err: err}
+			}
+			return CommandResultMsg{Status: fmt.Sprintf("watch %s cancelled", id)}
+		}
+	default:
+		// :watch [#pr] <trigger> <action>
+		if len(args) < 3 {
+			return func() tea.Msg {
+				return CommandResultMsg{Err: fmt.Errorf(":watch: usage: :watch [#pr] <trigger> <action>")}
+			}
+		}
+		return func() tea.Msg {
+			pr, err := e.resolvePR(args[0])
+			if err != nil {
+				return CommandResultMsg{Err: err}
+			}
+			trigger := args[1]
+			action := args[2]
+			if err := e.watches.AddWatch(pr.Repo, pr.Number, pr.URL, trigger, action); err != nil {
+				return CommandResultMsg{Err: err}
+			}
+			return CommandResultMsg{Status: fmt.Sprintf("watch added for %s#%d", pr.Repo, pr.Number)}
+		}
 	}
 }
 

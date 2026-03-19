@@ -666,7 +666,7 @@ tasks:
 
   - id: 27
     title: Watch management commands
-    status: pending
+    status: done
     depends_on: [25, 26, 4, 21]
     description: >
       Implement :watch sub-commands wired through the command bar:

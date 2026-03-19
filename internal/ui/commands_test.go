@@ -152,15 +152,34 @@ func (f *fakeDNDController) Wake() error {
 	return f.wakeErr
 }
 
-// fakeWatchEngine records AddWatch calls.
+// fakeWatchEngine records watch management calls.
 type fakeWatchEngine struct {
-	addWatchErr error
-	called      bool
+	addWatchErr    error
+	listWatchesErr error
+	cancelWatchErr error
+
+	addCalled    bool
+	listCalled   bool
+	cancelCalled bool
+
+	lastCancelID string
+	watches      []persistence.Watch
 }
 
-func (f *fakeWatchEngine) AddWatch(_ string, _ int, _, _ string) error {
-	f.called = true
+func (f *fakeWatchEngine) AddWatch(_ string, _ int, _ string, _, _ string) error {
+	f.addCalled = true
 	return f.addWatchErr
+}
+
+func (f *fakeWatchEngine) ListWatches() ([]persistence.Watch, error) {
+	f.listCalled = true
+	return f.watches, f.listWatchesErr
+}
+
+func (f *fakeWatchEngine) CancelWatch(id string) error {
+	f.cancelCalled = true
+	f.lastCancelID = id
+	return f.cancelWatchErr
 }
 
 // fakeHelpOverlay records Show calls.
@@ -1142,13 +1161,15 @@ func TestExecute_Watch(t *testing.T) {
 	if r.Err != nil {
 		t.Errorf("unexpected error: %v", r.Err)
 	}
-	if !we.called {
+	if !we.addCalled {
 		t.Error("AddWatch should have been called")
 	}
 }
 
 func TestExecute_Watch_TooFewArgs(t *testing.T) {
-	exec := newExec(&fakePRMutator{}, &fakePRStore{})
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
 	msg := runCmd(t, exec.Execute(":watch", []string{"a", "on:ci"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
@@ -1163,6 +1184,17 @@ func TestExecute_Watch_NilEngine(t *testing.T) {
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when watch engine is nil")
+	}
+}
+
+func TestExecute_Watch_NoArgs(t *testing.T) {
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute(":watch", nil))
+	r := msg.(CommandResultMsg)
+	if r.Err == nil {
+		t.Error("expected error when no args given")
 	}
 }
 
@@ -1185,6 +1217,102 @@ func TestExecute_Watch_PRNotFound(t *testing.T) {
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error for unknown PR ref")
+	}
+}
+
+// ── :watch list ────────────────────────────────────────────────────────────────
+
+func TestExecute_WatchList_NoWatches(t *testing.T) {
+	we := &fakeWatchEngine{watches: nil}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute(":watch", []string{"list"}))
+	r, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if r.Err != nil {
+		t.Errorf("unexpected error: %v", r.Err)
+	}
+	if !we.listCalled {
+		t.Error("ListWatches should have been called")
+	}
+}
+
+func TestExecute_WatchList_WithWatches(t *testing.T) {
+	we := &fakeWatchEngine{
+		watches: []persistence.Watch{
+			{ID: "w1", Repo: "owner/repo", PRNumber: 42, TriggerExpr: "on:ci-pass", ActionExpr: "merge", Status: "waiting"},
+			{ID: "w2", Repo: "owner/repo", PRNumber: 99, TriggerExpr: "on:approved", ActionExpr: "notify", Status: "waiting"},
+		},
+	}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute(":watch", []string{"list"}))
+	r, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if r.Err != nil {
+		t.Errorf("unexpected error: %v", r.Err)
+	}
+	if r.Status == "" {
+		t.Error("expected non-empty status with watch list")
+	}
+}
+
+func TestExecute_WatchList_Error(t *testing.T) {
+	we := &fakeWatchEngine{listWatchesErr: errors.New("db error")}
+	store := &fakePRStore{}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute(":watch", []string{"list"}))
+	r := msg.(CommandResultMsg)
+	if r.Err == nil {
+		t.Error("expected error from ListWatches")
+	}
+}
+
+// ── :watch cancel ─────────────────────────────────────────────────────────────
+
+func TestExecute_WatchCancel_Success(t *testing.T) {
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute(":watch", []string{"cancel", "w42"}))
+	r, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if r.Err != nil {
+		t.Errorf("unexpected error: %v", r.Err)
+	}
+	if !we.cancelCalled {
+		t.Error("CancelWatch should have been called")
+	}
+	if we.lastCancelID != "w42" {
+		t.Errorf("CancelWatch called with ID %q, want %q", we.lastCancelID, "w42")
+	}
+}
+
+func TestExecute_WatchCancel_NoID(t *testing.T) {
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute(":watch", []string{"cancel"}))
+	r := msg.(CommandResultMsg)
+	if r.Err == nil {
+		t.Error("expected error when cancel ID is missing")
+	}
+}
+
+func TestExecute_WatchCancel_Error(t *testing.T) {
+	we := &fakeWatchEngine{cancelWatchErr: errors.New("cancel failed")}
+	store := &fakePRStore{}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute(":watch", []string{"cancel", "w1"}))
+	r := msg.(CommandResultMsg)
+	if r.Err == nil {
+		t.Error("expected error from CancelWatch")
 	}
 }
 
