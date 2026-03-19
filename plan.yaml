@@ -20,7 +20,7 @@ tasks:
 
   - id: 1
     title: Initialize Go module and directory structure
-    status: pending
+    status: done
     depends_on: []
     description: >
       Run `go mod init github.com/evanisnor/argh` targeting Go 1.22+. Create the
