@@ -568,7 +568,7 @@ tasks:
 
   - id: 23
     title: Diff viewer integration (internal/diff)
-    status: pending
+    status: done
     depends_on: [6]
     description: >
       Implement :diff by fetching the PR diff via GitHub REST API
