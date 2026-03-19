@@ -35,7 +35,7 @@
 - Git operations (commit, push, rebase) — delegate to the user's existing tooling.
 - Support for GitLab, Bitbucket, or other providers.
 - A web UI or Electron wrapper.
-- Windows or Linux support (v1 is macOS only).
+- Windows or Linux support (v1 is macOS only; enforced by runtime check).
 - Execution of arbitrary local shell commands in automation (security risk).
 
 ---
@@ -201,7 +201,7 @@ A rule-based engine that watches PR state and triggers actions automatically or 
 - `:watch [#pr] on:ci-pass ready` — mark ready when CI passes
 - `:watch list` — show all pending automation entries
 - `:watch cancel [id]` — cancel a queued automation
-- Queued rules persist across restarts (stored in `~/.config/argh/queue.yaml`, managed with `yq`)
+- Queued rules persist across restarts (stored in `~/.config/argh/queue.yaml`). Persistence uses stable PR URLs or global IDs, mapped back to ephemeral session IDs at runtime.
 
 ---
 
@@ -345,8 +345,8 @@ Events are debounced with a 5s window. Repeated state flapping (CI pass→fail�
 | Components | [Bubbles](https://github.com/charmbracelet/bubbles) | Input, spinner, list, viewport, paginator |
 | Markdown | [Glamour](https://github.com/charmbracelet/glamour) | Render PR descriptions in terminal |
 | Diff Viewer | [delta](https://github.com/dandavison/delta) | Beautiful syntax-highlighted diffs |
-| GitHub API | `gh` CLI + GitHub GraphQL API | Authenticated via `gh auth`, rich data via GraphQL |
-| Config | YAML via [viper](https://github.com/spf13/viper) + `yq` | Standard Go config management; `yq` for runtime read/write of queue and config files |
+| GitHub API | Native Go Clients | `shurcooL/githubv4` + `google/go-github`; `gh` CLI used only for auth token |
+| Config | YAML via `gopkg.in/yaml.v3` | Native Go config management; no external dependencies |
 | Database | SQLite (via `mattn/go-sqlite3` or modern pure-Go variant) | Reactive persistent cache, complex queries, robust offline state |
 | Fuzzy Match | [go-fuzz](https://github.com/sahilm/fuzzy) or [fzf-lib](https://github.com/junegunn/fzf) | Command bar autocomplete |
 
@@ -368,7 +368,7 @@ Events are debounced with a 5s window. Repeated state flapping (CI pass→fail�
 │                                       └────────────────┘    │
 │   ┌──────────────┐                            │             │
 │   │  Automation  │◄───────────────────────────┘             │
-│   │  Engine      │─── actions ──► gh CLI calls              │
+│   │  Engine      │─── actions ──► Native API calls          │
 │   └──────────────┘                                          │
 │                                                             │
 │   ┌──────────────┐                                          │
@@ -412,6 +412,7 @@ argh uses `lipgloss.HasDarkBackground()` to automatically adapt to the terminal'
 - **GraphQL** for fetching details of those PRs (bulk query).
 - **REST** for mutating operations (create review, merge, add to merge queue).
 - **`gh auth token`** to obtain the authenticated token — no separate OAuth flow needed.
+- **Native Clients**: All API interactions use native Go clients (`shurcooL/githubv4` and `google/go-github`). `gh` is only invoked to retrieve the auth token.
 
 ### Reactive Caching Strategy
 
@@ -420,6 +421,7 @@ The UI is powered entirely by a local **SQLite database**.
 - **Reactive Updates:** The API client writes to the database. The database layer emits events/updates. The UI subscribes to these updates and re-renders.
 - **Continuous Persistence:** All data is persisted to disk immediately upon write.
 - **Offline First:** `argh` is fully functional offline (read-only) using the last known state.
+- **Concurrency:** Multiple instances of `argh` can run simultaneously. Each instance polls independently, and SQLite handles concurrent access.
 
 ### Polling Strategy & Rate Limits
 
@@ -508,7 +510,6 @@ tap "evanisnor/tap"
 # Runtime dependencies
 brew "gh"                           # GitHub CLI — authentication and fallback operations
 brew "dandavison/delta/git-delta"   # Syntax-highlighted diff pager
-brew "yq"                           # YAML processor — read/write config and queue files
 
 # The app itself (once formula is published)
 brew "evanisnor/tap/argh"
