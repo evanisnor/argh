@@ -1,7 +1,15 @@
 ---
 # argh — Implementation Plan
 # Generated from VISION.md and ARCHITECTURE.md
-# Last updated: 2026-03-18
+# Last updated: 2026-03-19
+
+# ─── Testing Policy ──────────────────────────────────────────────────────────
+# All code must be unit tested with 100% branch and line coverage.
+# Tests are written alongside the implementation as part of each task.
+# Each task includes a `testing` field describing the key scenarios to cover.
+# Use table-driven tests where multiple input variants exist.
+# Mock external boundaries (GitHub API, filesystem, OS notifications) with
+# interfaces; test internal logic against fakes or in-memory implementations.
 
 tasks:
 
@@ -27,6 +35,8 @@ tasks:
     references:
       - "ARCHITECTURE.md § Directory Structure"
       - "ARCHITECTURE.md § Technology Stack"
+    testing: >
+      Verify the module compiles and the stub binary exits with code 0.
 
   - id: 2
     title: macOS-only runtime guard
@@ -38,6 +48,10 @@ tasks:
       This is a hard non-goal for v1 per the PRD.
     references:
       - "VISION.md § 1 Non-Goals — Windows or Linux support"
+    testing: >
+      Table-driven: GOOS=darwin → no error; GOOS=linux → error + non-zero exit.
+      Inject GOOS as a parameter rather than reading runtime.GOOS directly so
+      the guard is testable without cross-compilation.
 
   - id: 3
     title: Config loading (internal/config)
@@ -59,6 +73,12 @@ tasks:
       - "VISION.md § 9.6 Do Not Disturb Mode — scheduled DND yaml"
       - "VISION.md § 9.7 Sleep Schedule — yaml config"
       - "ARCHITECTURE.md § Technology Stack — Config: YAML via gopkg.in/yaml.v3"
+    testing: >
+      - Missing file → all defaults applied.
+      - Partial file → specified fields overridden, rest use defaults.
+      - Full valid file → all fields parsed correctly.
+      - Malformed YAML → clear error returned.
+      - Config dir created if absent (use temp dir in tests).
 
   # ─── Phase 2: Persistence / Cache Layer ─────────────────────────────────────
 
@@ -79,12 +99,20 @@ tasks:
           status (waiting, scheduled, fired, failed), created_at, fired_at
         - session_ids: pr_url, session_id  (reset on restart)
         - rate_limit: singleton row tracking remaining/reset values
+        - etags: url, etag, last_modified  (for conditional REST requests)
       Use WAL mode for concurrent reads. Expose typed read/write methods.
       Store database at ~/.local/share/argh/argh.db; create directory on first run.
     references:
       - "ARCHITECTURE.md § High-Level Architecture — DB: SQLite reactive cache"
       - "ARCHITECTURE.md § Data Flow Principles"
       - "VISION.md § 9.1 PR Status Bar Overlay — reads from local SQLite"
+    testing: >
+      Use an in-memory SQLite DB (:memory:) for all tests.
+      - Round-trip write/read for every table.
+      - Update existing rows: verify only changed fields update.
+      - Schema migration runs cleanly on a fresh DB.
+      - WAL mode is enabled after open.
+      - Data directory is created when absent.
 
   - id: 5
     title: Reactive event bus (DB → subscribers)
@@ -100,6 +128,11 @@ tasks:
       the UI polling the database.
     references:
       - "ARCHITECTURE.md § Data Flow Principles — DB emits events to UI and Watch"
+    testing: >
+      - Subscribe → publish → subscriber receives event with correct before/after.
+      - Multiple subscribers all receive the same event.
+      - Unsubscribe → subsequent publishes not delivered.
+      - No goroutine leak after bus shutdown.
 
   # ─── Phase 3: GitHub API Client ─────────────────────────────────────────────
 
@@ -115,6 +148,12 @@ tasks:
       for use in search queries.
     references:
       - "ARCHITECTURE.md § GitHub API Strategy — Authentication: gh auth token"
+    testing: >
+      Inject a command executor interface so tests can fake `gh` output.
+      - gh returns token → token stored, login fetched.
+      - gh not found → clear error.
+      - gh not authenticated (non-zero exit) → clear error.
+      - gh returns empty token → clear error.
 
   - id: 7
     title: GraphQL client — fetch My Pull Requests
@@ -125,12 +164,20 @@ tasks:
       for all open PRs authored by the current user across all repos. For each PR
       fetch: repo, number, title, state, isDraft, createdAt, updatedAt,
       reviewRequests (requestedReviewers), reviews (nodes: author, state),
-      checkSuites → checkRuns (name, status, conclusion), url, id, comments count.
+      checkSuites → checkRuns (name, status, conclusion), url, id, comments count,
+      mergeQueueEntry (to detect merge queued status).
       Write results into the persistence layer. Track last-seen state to detect
       changes and emit events.
     references:
       - "VISION.md § 3.1 My Pull Requests Panel — columns"
       - "ARCHITECTURE.md § GitHub API Strategy — GraphQL Search, GraphQL Query"
+    testing: >
+      Mock the GraphQL client interface.
+      - Successful response → all fields written to DB correctly.
+      - New PR appears → PR_UPDATED event emitted.
+      - Existing PR changes CI state → CI_CHANGED event emitted.
+      - No changes → no events emitted.
+      - API error → error returned, DB unchanged.
 
   - id: 8
     title: GraphQL client — fetch Review Queue
@@ -145,6 +192,11 @@ tasks:
     references:
       - "VISION.md § 3.2 Review Queue Panel — columns and urgency formula"
       - "ARCHITECTURE.md § GitHub API Strategy — GraphQL Search"
+    testing: >
+      Same mock strategy as task 7.
+      - Author wait time correctly derived from timeline events.
+      - PRs already in DB from task 7 (authored by self + review requested) are
+        not duplicated — each panel reads from its own query result set.
 
   - id: 9
     title: REST mutations — PR actions
@@ -158,11 +210,19 @@ tasks:
         - addLabel / removeLabel
         - mergePR(repo, number, method)  → PUT /pulls/{number}/merge
         - closePR / reopenPR
-        - markReadyForReview / convertToDraft (GraphQL mutations — no REST equivalent)
+        - markReadyForReview             → GraphQL mutation (no REST equivalent)
+        - convertToDraft                 → GraphQL mutation (no REST equivalent)
+        - resolveReviewThread(threadID)  → GraphQL mutation (no REST equivalent)
       Every mutation appends a line to the audit log (task 24).
     references:
       - "VISION.md § 3.6 Interactive Commands"
+      - "VISION.md § 9.3 Inline Comment Thread Browser — mark resolved"
       - "ARCHITECTURE.md § GitHub API Strategy — REST API: mutations"
+    testing: >
+      Mock the REST and GraphQL clients via interfaces.
+      - Each mutation calls the correct endpoint with correct parameters.
+      - Successful mutation → audit log entry appended.
+      - API error → error returned, audit log not written.
 
   - id: 10
     title: Rate limit tracking and adaptive back-off
@@ -180,6 +240,11 @@ tasks:
       ("API ●●●○ 3,847/5,000").
     references:
       - "ARCHITECTURE.md § Polling & Rate Limits — Adaptive Back-Off"
+    testing: >
+      Table-driven over all four remaining thresholds (>1000, 500-999, 100-499, <100).
+      - Each threshold produces the correct interval multiplier.
+      - <100 emits a warning event.
+      - Values are persisted to the rate_limit row after each response.
 
   - id: 11
     title: ETag / conditional request caching for REST endpoints
@@ -187,11 +252,15 @@ tasks:
     depends_on: [9]
     description: >
       For REST endpoints used in polling (PR details, check runs), store the
-      ETag and Last-Modified response headers in SQLite. On subsequent requests
-      send If-None-Match / If-Modified-Since. A 304 response skips writing to
-      the DB and costs 0 primary-limit points.
+      ETag and Last-Modified response headers in the etags table in SQLite.
+      On subsequent requests send If-None-Match / If-Modified-Since headers.
+      A 304 response skips writing to the DB and costs 0 primary-limit points.
     references:
       - "ARCHITECTURE.md § Polling & Rate Limits — REST Conditional Requests"
+    testing: >
+      - First request: no ETag sent, response ETag stored.
+      - Second request: ETag header sent; 304 response → DB not written.
+      - 200 response with new ETag → DB written, ETag updated.
 
   # ─── Phase 4: Poll Ticker & Sleep Schedule ───────────────────────────────────
 
@@ -208,6 +277,12 @@ tasks:
     references:
       - "ARCHITECTURE.md § High-Level Architecture — Poll Ticker"
       - "ARCHITECTURE.md § Chosen Poll Interval: 10 seconds"
+    testing: >
+      Use a fake clock / injectable ticker.
+      - Ticker fires → fetch functions called.
+      - Force-poll channel → immediate fetch without waiting for tick.
+      - Shutdown signal → goroutine exits cleanly, no leak.
+      - Interval changes mid-run (rate-limit back-off) → next tick uses new interval.
 
   - id: 13
     title: Sleep schedule — reduced polling during off-hours
@@ -221,6 +296,13 @@ tasks:
       command to immediately resume normal polling regardless of schedule.
     references:
       - "VISION.md § 9.7 Sleep Schedule"
+    testing: >
+      Inject a clock interface for time.Now().
+      Table-driven over: inside window, outside window, boundary (start/end of window),
+      all_day window, multi-day window spanning midnight.
+      - Inside window → sleep interval used.
+      - Outside window → normal interval used.
+      - :wake → normal interval restored immediately regardless of window.
 
   # ─── Phase 5: TUI Foundation ─────────────────────────────────────────────────
 
@@ -246,6 +328,12 @@ tasks:
       - "VISION.md § 4 Wireframe Layout"
       - "ARCHITECTURE.md § UI & Theming"
       - "ARCHITECTURE.md § Directory Structure — ui/model.go"
+    testing: >
+      Use bubbletea/teatest or drive Update() directly with synthetic messages.
+      - DB event → correct Bubble Tea message dispatched to correct sub-model.
+      - View() output contains all expected panel regions.
+      - Watches panel absent from View() when no watches exist.
+      - Detail pane absent from View() when collapsed.
 
   - id: 15
     title: Global keyboard navigation
@@ -270,6 +358,11 @@ tasks:
         p         toggle detail pane
     references:
       - "VISION.md § 5 Interaction Model — Keyboard Navigation"
+    testing: >
+      Table-driven over every key binding.
+      - Each key produces the correct model state change or command.
+      - `a` (approve) only fires when focus is in Review Queue, not My PRs.
+      - Esc dismisses overlay when one is open; unfocuses command bar otherwise.
 
   # ─── Phase 6: Panels ─────────────────────────────────────────────────────────
 
@@ -286,6 +379,11 @@ tasks:
     references:
       - "VISION.md § 3.1 My Pull Requests — id column"
       - "VISION.md § 5 Local Session IDs"
+    testing: >
+      - 1 PR → id "a"; 26 PRs → ids "a"–"z"; 27 PRs → "a"–"z", "aa".
+      - Reload clears old IDs and reassigns from scratch.
+      - PR URL key is stable across reloads (same URL → same ID if order unchanged).
+      - session_ids table is cleared on restart.
 
   - id: 17
     title: My Pull Requests panel (internal/ui/panel_prs.go)
@@ -306,6 +404,14 @@ tasks:
     references:
       - "VISION.md § 3.1 My Pull Requests Panel"
       - "ARCHITECTURE.md § Directory Structure — ui/panel_prs.go"
+    testing: >
+      - Sorting: PRs with older last_activity_at appear first.
+      - Draft PRs rendered with [draft] prefix and dimmed style.
+      - Failing CI row has highlight style applied.
+      - 👁 icon present when watches exist, absent when none.
+      - Badge count matches number of rows.
+      - All five status values render correctly.
+      - All four CI states render correct symbol.
 
   - id: 18
     title: Review Queue panel (internal/ui/panel_reviews.go)
@@ -326,6 +432,14 @@ tasks:
     references:
       - "VISION.md § 3.2 Review Queue Panel"
       - "ARCHITECTURE.md § Directory Structure — ui/panel_reviews.go"
+    testing: >
+      Table-driven urgency formula covering all combinations:
+        staleness × CI state × author wait → expected score (clamped 1–3).
+      At minimum: base=1+ci_fail+author_wait → clamped to 3 (not 4).
+                  base=3+ci_pass → 2 (not 1, since clamped ≥1).
+      - Sorted by urgency descending.
+      - Last-required-reviewer highlight applied correctly.
+      - Ready-to-review highlight (CI passing, no blockers).
 
   - id: 19
     title: Watches panel (internal/ui/panel_watches.go)
@@ -344,6 +458,11 @@ tasks:
     references:
       - "VISION.md § 3.4 Watches Panel"
       - "ARCHITECTURE.md § Directory Structure — ui/panel_watches.go"
+    testing: >
+      - No watches → panel collapsed (not present in View output).
+      - Each status value renders correct symbol.
+      - WATCH_FIRED event → flash animation triggered on correct row.
+      - Badge count reflects active (non-fired, non-failed) watches.
 
   - id: 20
     title: Detail / Preview pane (internal/ui/panel_detail.go)
@@ -358,12 +477,20 @@ tasks:
         - Active watches for this PR.
         - Recent timeline events (commits, reviews, labels).
       Inline thread navigation: n/N cycles through open review threads.
-      Implement "mark resolved" action on a thread without opening browser.
+      Implement "mark resolved" action on a thread (calls resolveReviewThread
+      GraphQL mutation via task 9) without opening browser.
       Use Bubbles viewport component for scrollable content.
     references:
       - "VISION.md § 3.3 Detail / Preview Pane"
       - "VISION.md § 9.3 Inline Comment Thread Browser"
       - "ARCHITECTURE.md § Technology Stack — Markdown: Glamour"
+    testing: >
+      - Collapsed by default; Enter/p toggles open.
+      - PR description rendered as markdown (Glamour output non-empty).
+      - n/N navigation cycles through open threads only (resolved excluded).
+      - Mark resolved calls resolveReviewThread with correct thread ID.
+      - Thread marked resolved disappears from navigation cycle.
+      - Pane with no threads: n/N is a no-op.
 
   # ─── Phase 7: Command Bar ────────────────────────────────────────────────────
 
@@ -374,7 +501,7 @@ tasks:
     description: >
       Persistent input bar pinned to the bottom. Activated with / or :
       Features:
-        - Fuzzy command autocomplete as user types (go-fuzz or fzf-lib).
+        - Fuzzy command autocomplete using sahilm/fuzzy as user types.
         - After command selected, activate PR completion:
             local session ID (a, b …), PR number (#42), or title fragment.
           PR list filtered from visible panels.
@@ -388,7 +515,15 @@ tasks:
     references:
       - "VISION.md § 3.5 Command Bar"
       - "VISION.md § 5 Command Bar Autocomplete Behavior"
-      - "ARCHITECTURE.md § Technology Stack — Fuzzy Match"
+      - "ARCHITECTURE.md § Technology Stack — Fuzzy Match: sahilm/fuzzy"
+    testing: >
+      - `:mer` → suggestions include `:merge`, filtered by fuzzy score.
+      - Tab accepts top suggestion.
+      - After command, PR list activates: local ID, #number, title fragment all match.
+      - `:request` + `@` → collaborator list shown.
+      - ↑/↓ cycles history when no suggestion list active.
+      - Esc → input cleared, bar unfocused.
+      - Help hint updates as command is typed.
 
   # ─── Phase 8: Interactive Commands ───────────────────────────────────────────
 
@@ -401,7 +536,7 @@ tasks:
       PR reference (session ID, #number, or title fragment) then calls the
       appropriate REST mutation (task 9) or local action:
         :open [#pr]              → open URL in default browser (open cmd)
-        :diff [#pr]              → invoke delta pager with PR diff
+        :diff [#pr]              → invoke delta pager with PR diff (task 23)
         :approve [#pr]           → REST: submit approval review
         :review [#pr]            → open inline compose view (body + submit)
         :request [#pr] @user...  → REST: request reviewers
@@ -413,14 +548,20 @@ tasks:
         :reopen [#pr]            → REST: reopen PR
         :label [#pr] [label]     → REST: add/remove label
         :comment [#pr]           → open inline editor, post comment
-        :dnd [duration]          → toggle DND mode (task 29)
+        :dnd [duration]          → toggle DND mode (task 32)
         :wake                    → resume normal polling (task 13)
         :reload                  → force immediate poll
-        :help                    → show help overlay
+        :help                    → show help overlay (task 40)
         :quit / q                → exit
       All commands are immediately acted upon with no confirmation prompt.
     references:
       - "VISION.md § 3.6 Interactive Commands"
+    testing: >
+      - PR reference resolution: session ID, #number, and title fragment all
+        resolve to the correct PR; unknown reference returns clear error.
+      - Each command calls the expected mutation/action with correct arguments.
+      - :reload triggers the force-poll channel.
+      - :quit sends the Bubble Tea quit command.
 
   - id: 23
     title: Diff viewer integration (internal/diff)
@@ -435,11 +576,16 @@ tasks:
     references:
       - "ARCHITECTURE.md § Technology Stack — Diff Viewer: delta"
       - "VISION.md § 3.6 :diff command"
+    testing: >
+      Inject executor interface for subprocess and HTTP client.
+      - delta present → diff fetched, piped to delta, TUI suspended/resumed.
+      - delta absent → fallback diff shown with install hint.
+      - API error fetching diff → error surfaced to user.
 
   # ─── Phase 9: Audit Log ──────────────────────────────────────────────────────
 
   - id: 24
-    title: Audit log (internal/persistence or internal/audit)
+    title: Audit log (internal/audit)
     status: pending
     depends_on: [1]
     description: >
@@ -451,6 +597,13 @@ tasks:
     references:
       - "VISION.md § 3.6 — every action recorded in audit log"
       - "VISION.md § 9.5 Audit Log"
+    testing: >
+      Use a temp directory for log path in tests.
+      - Entry appended with correct format (parseable ISO-8601 timestamp).
+      - Multiple entries accumulate in order.
+      - Log directory created if absent.
+      - Concurrent writes do not interleave entries (use file locking or
+        a single writer goroutine).
 
   # ─── Phase 10: Watch Engine ──────────────────────────────────────────────────
 
@@ -471,6 +624,18 @@ tasks:
       a PR snapshot from the DB.
     references:
       - "VISION.md § 3.7 Watch — Trigger types, Trigger Syntax"
+    testing: >
+      Table-driven over all atom types, AND combinator, OR combinator,
+      mixed AND+OR, invalid expressions.
+      - Valid expressions parse to correct AST.
+      - approved:N parses N correctly.
+      - <Nh>-stale parses duration correctly.
+      - label-added:<name> captures label name.
+      - Invalid expression → clear parse error.
+      AST evaluation tests (separate from parsing):
+      - AND: both conditions true → fires; one false → does not fire.
+      - OR: one condition true → fires; both false → does not fire.
+      - Time-based: elapsed ≥ duration → fires; elapsed < duration → does not fire.
 
   - id: 26
     title: Watch action parser
@@ -485,9 +650,16 @@ tasks:
         comment:<text>
         label:<name>
         notify                (desktop notification)
-      Actions can be combined: e.g., `comment + notify`.
+      Actions can be combined with `+`: e.g., `comment:text + notify`.
     references:
       - "VISION.md § 3.7 Watch — Action types"
+    testing: >
+      Table-driven over all action types and combined expressions.
+      - Each valid action parses to correct struct with correct fields.
+      - merge with no method → method field is empty (use repo default).
+      - merge:squash → method=squash.
+      - Combined `comment:text + notify` → two action structs returned.
+      - Invalid action → clear parse error.
 
   - id: 27
     title: Watch management commands
@@ -500,15 +672,19 @@ tasks:
         :watch list                      → show all active watches (also shown
                                            in Watches panel)
         :watch cancel [id]               → delete or mark cancelled in DB
-      Watches persist across restarts in the watches table (keyed by PR URL,
-      mapped to ephemeral session IDs at runtime).
+      Watches persist across restarts in the watches table in SQLite (keyed by
+      PR URL, mapped to ephemeral session IDs at runtime). SQLite is the single
+      source of truth; no watches.yaml file is used.
     references:
       - "VISION.md § 3.7 Watch — Queue Management"
-      - "VISION.md § 6 Watches — persistence in watches.yaml"
-        note: >
-          Architecture stores in SQLite; VISION.md mentions watches.yaml as the
-          persistence format. Reconcile: store canonical data in SQLite and
-          optionally export/import from ~/.config/argh/watches.yaml on startup/shutdown.
+      - "ARCHITECTURE.md § High-Level Architecture — DB: SQLite"
+    testing: >
+      - :watch creates row in DB with status=waiting, correct trigger/action expr.
+      - :watch list returns all non-cancelled watches.
+      - :watch cancel [id] marks row cancelled; subsequent list excludes it.
+      - Invalid trigger expression → error, no DB write.
+      - Invalid action expression → error, no DB write.
+      - Watch survives process restart (read back from DB on next startup).
 
   - id: 28
     title: Watch Engine goroutine (internal/watches)
@@ -526,6 +702,14 @@ tasks:
     references:
       - "VISION.md § 3.7 Watch — Watch Engine"
       - "ARCHITECTURE.md § High-Level Architecture — Watch Engine goroutine"
+    testing: >
+      - PR_UPDATED event with matching trigger → action executed, status=fired,
+        audit entry written, WATCH_FIRED emitted.
+      - PR_UPDATED with non-matching trigger → no action, status unchanged.
+      - Action fails (API error) → status=failed, error in audit log.
+      - Time-based trigger: inject clock; elapsed ≥ duration → fires.
+      - Multiple watches for same PR → each evaluated independently.
+      - Goroutine exits cleanly on shutdown signal.
 
   # ─── Phase 11: Notification System ──────────────────────────────────────────
 
@@ -544,6 +728,11 @@ tasks:
       yellow (pending/waiting), blue (info).
     references:
       - "VISION.md § 7 In-App Visual Notifications"
+    testing: >
+      - CI_CHANGED event → correct row gains flash style in View output.
+      - REVIEW_CHANGED event → status bar text updated with correct PR and actor.
+      - Badge counter increments on new PR, decrements on close/merge.
+      - Each color code applied to correct event type.
 
   - id: 30
     title: macOS system notifications (internal/notify)
@@ -560,10 +749,16 @@ tasks:
         - You are requested as a reviewer on a new PR
         - Watch action executed
       Respect the per-event config flags (notifications: section of config.yaml).
-      Skip all system notifications when DND is active (task 31).
+      Skip all system notifications when DND is active (task 32).
     references:
       - "VISION.md § 7 System Notifications"
       - "ARCHITECTURE.md § Technology Stack — Notifications"
+    testing: >
+      Inject the OS notification sender as an interface.
+      - Each trigger event fires a notification with correct title/body.
+      - Config flag false for event type → notification not sent.
+      - DND active → no notifications sent regardless of config.
+      - CI running→passing fires; CI running→running does not fire.
 
   - id: 31
     title: Notification deduplication and debouncing
@@ -576,6 +771,12 @@ tasks:
       notification. Track in-memory state per (pr_url, event_type) key.
     references:
       - "VISION.md § 7 Notification Deduplication"
+    testing: >
+      Inject clock interface.
+      - Same event within 5s → second notification dropped.
+      - Same event after 5s → notification sent.
+      - CI pass→fail→pass within 60s → single notification.
+      - CI pass→fail→pass after 60s reset → two notifications.
 
   - id: 32
     title: Do Not Disturb mode (VISION.md §9.6)
@@ -591,6 +792,14 @@ tasks:
     references:
       - "VISION.md § 9.6 Do Not Disturb Mode"
       - "VISION.md § 3.6 :dnd command"
+    testing: >
+      Inject clock interface.
+      - :dnd toggles DND on; second :dnd toggles off.
+      - :dnd 2h → DND active; after 2h elapses → DND deactivated.
+      - Scheduled window active → DND on automatically.
+      - Scheduled window ends → DND off automatically.
+      - DND active → status bar shows "🔕 DND".
+      - DND active → system notifications suppressed; in-app visuals unaffected.
 
   # ─── Phase 12: Additional Features ──────────────────────────────────────────
 
@@ -608,6 +817,11 @@ tasks:
       status-right or shell prompt via command substitution.
     references:
       - "VISION.md § 9.1 PR Status Bar Overlay"
+    testing: >
+      - DB with known data → correct counts in output.
+      - DB does not exist → graceful output (e.g., "argh: no data").
+      - DB stale (last_activity_at old) → staleness indicator in output.
+      - Output is a single line ending with newline.
 
   - id: 34
     title: Smart review assignment suggestions (VISION.md §9.2)
@@ -623,6 +837,12 @@ tasks:
       list before the request is sent.
     references:
       - "VISION.md § 9.2 Smart Review Assignment"
+    testing: >
+      Mock all three signals independently.
+      - All three signals available → merged ranked list, no duplicates.
+      - git blame unavailable → ranking uses remaining two signals.
+      - All signals unavailable → empty suggestion list, command still works.
+      - De-duplication: same login from multiple signals appears once.
 
   - id: 35
     title: Per-repo configuration (.argh.yaml)
@@ -638,8 +858,42 @@ tasks:
       Repo-level config takes precedence over global config for the relevant repo.
     references:
       - "VISION.md § 9.4 Per-Repo Configuration"
+    testing: >
+      Mock the GitHub API file fetch.
+      - .argh.yaml present → overrides applied for that repo.
+      - .argh.yaml absent → global config used unchanged.
+      - .argh.yaml malformed → error logged, global config used as fallback.
+      - Repo-level merge_strategy overrides global for merge command on that repo.
 
-  # ─── Phase 13: Distribution & CI/CD ─────────────────────────────────────────
+  # ─── Phase 13: Help Overlay ──────────────────────────────────────────────────
+
+  - id: 40
+    title: Help overlay (internal/ui/overlay_help.go)
+    status: pending
+    depends_on: [14]
+    description: >
+      Implement a full-screen overlay showing all available commands and keyboard
+      shortcuts as a reference card. Toggled with `?` key or `:help` command.
+      Dismissed with Esc or `?` again. Rendered on top of the normal layout
+      using lipgloss — underlying panels are still visible but dimmed.
+      Content sections:
+        - Keyboard shortcuts (j/k/Tab/Enter/o/d/a/r/q/R/D/p/?)
+        - Command reference (:open, :diff, :approve, :review, :request,
+          :ready, :draft, :merge, :watch, :close, :reopen, :label, :comment,
+          :dnd, :wake, :reload, :help, :quit)
+        - Watch trigger syntax examples
+        - Watch action syntax examples
+    references:
+      - "VISION.md § 3.6 Interactive Commands — :help"
+      - "VISION.md § 5 Keyboard Navigation — ?"
+    testing: >
+      - ? key → overlay visible in View output.
+      - Esc → overlay dismissed, underlying layout restored.
+      - Second ? → overlay dismissed.
+      - :help → overlay visible.
+      - Overlay content contains all keyboard shortcuts and commands.
+
+  # ─── Phase 14: Distribution & CI/CD ─────────────────────────────────────────
 
   - id: 36
     title: goreleaser configuration and cross-compilation
@@ -651,6 +905,8 @@ tasks:
       Include SHA256 checksums. Validate with `goreleaser check`.
     references:
       - "ARCHITECTURE.md § Build & Release — goreleaser"
+    testing: >
+      Run `goreleaser check` in CI to validate config. No unit tests required.
 
   - id: 37
     title: GitHub Actions CI/CD workflow
@@ -658,12 +914,16 @@ tasks:
     depends_on: [36]
     description: >
       Create .github/workflows/ with:
-        - ci.yml: runs on push/PR — `go test ./...`, `go vet`, staticcheck.
+        - ci.yml: runs on push/PR — `go test -race -coverprofile=coverage.out ./...`,
+          `go vet`, staticcheck. Fail if coverage drops below 100%.
         - release.yml: triggers on tag push (v*) — runs goreleaser, uploads
           binaries to GitHub Releases.
       Include version number from tag in the binary via ldflags.
     references:
       - "ARCHITECTURE.md § Build & Release — GitHub Actions"
+    testing: >
+      Workflow correctness is validated by GitHub Actions execution. No separate
+      unit tests. Ensure `go test -race` is used to catch data races.
 
   - id: 38
     title: Homebrew tap formula
@@ -680,6 +940,8 @@ tasks:
     references:
       - "ARCHITECTURE.md § Distribution & Dependencies — Homebrew Formula"
       - "ARCHITECTURE.md § Installation Flow"
+    testing: >
+      Run `brew audit --strict` against the formula. No unit tests required.
 
   - id: 39
     title: Brewfile
@@ -694,3 +956,5 @@ tasks:
       This allows `brew bundle` to install everything in one step.
     references:
       - "ARCHITECTURE.md § Distribution & Dependencies — Brewfile"
+    testing: >
+      No unit tests required. Validated by `brew bundle check`.
