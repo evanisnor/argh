@@ -422,6 +422,20 @@ func containsAny(s string, subs ...string) bool {
 
 // handleKey handles all global key bindings.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// When the command bar is focused, every keystroke goes directly to it
+	// so the textinput receives every character. Only ctrl+c (quit) and esc
+	// (blur) are kept as root-model concerns.
+	if m.commandBarFocused {
+		switch msg.String() {
+		case "ctrl+c", "esc":
+			// handled by the switch below
+		default:
+			var cmd tea.Cmd
+			m.commandBar, cmd = m.commandBar.Update(msg)
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		if m.unsubscribe != nil {
@@ -433,11 +447,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focused = (m.focused + 1) % 3
 
 	case "enter", "p":
-		if m.commandBarFocused {
-			var cmd tea.Cmd
-			m.commandBar, cmd = m.commandBar.Update(msg)
-			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
-		}
 		m.detailOpen = !m.detailOpen
 
 	case "n", "N":

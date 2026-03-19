@@ -1490,3 +1490,101 @@ func TestModel_ReviewSuggestionsMsg_FocusesCommandBar(t *testing.T) {
 		t.Errorf("command bar did not receive ReviewSuggestionsMsg; lastMsg = %T", cmdBar.lastMsg)
 	}
 }
+
+// ── Command-bar key-forwarding tests ─────────────────────────────────────────
+
+// TestKey_WhenCommandBarFocused_ForwardsAllKeysToCommandBar verifies that when
+// the command bar is focused every keystroke (letters, navigation keys, etc.)
+// is forwarded to the command bar sub-model and does NOT trigger root-level
+// actions such as quitting or cycling panel focus.
+func TestKey_WhenCommandBarFocused_ForwardsAllKeysToCommandBar(t *testing.T) {
+	keys := []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("a")},
+		{Type: tea.KeyRunes, Runes: []rune("q")},
+		{Type: tea.KeyRunes, Runes: []rune("j")},
+		{Type: tea.KeyRunes, Runes: []rune("k")},
+		{Type: tea.KeyRunes, Runes: []rune("d")},
+		{Type: tea.KeyRunes, Runes: []rune("r")},
+		{Type: tea.KeyRunes, Runes: []rune("p")},
+		{Type: tea.KeyRunes, Runes: []rune("R")},
+		{Type: tea.KeyRunes, Runes: []rune("D")},
+		{Type: tea.KeyTab},
+		{Type: tea.KeyDown},
+		{Type: tea.KeyUp},
+		{Type: tea.KeyEnter},
+	}
+
+	for _, key := range keys {
+		t.Run(key.String(), func(t *testing.T) {
+			cmdBar := newStub("cmdBar", false)
+			m, _ := newTestModel(
+				newStub("myPRs", true),
+				newStub("reviewQueue", true),
+				newStub("watches", false),
+				newStub("detail", false),
+				cmdBar,
+			)
+			m.commandBarFocused = true
+			initialFocused := m.focused
+			wasOpen := m.detailOpen
+
+			// applyMsg discards the cmd (which would block on the event channel).
+			m2 := applyMsg(m, key)
+
+			if m2.focused != initialFocused {
+				t.Errorf("key %q changed panel focus from %d to %d", key.String(), initialFocused, m2.focused)
+			}
+			if m2.detailOpen != wasOpen {
+				t.Errorf("key %q toggled detailOpen from %v to %v", key.String(), wasOpen, m2.detailOpen)
+			}
+			if _, ok := cmdBar.lastMsg.(tea.KeyMsg); !ok {
+				t.Errorf("key %q: command bar did not receive KeyMsg; lastMsg = %T", key.String(), cmdBar.lastMsg)
+			}
+		})
+	}
+}
+
+// TestKey_CtrlC_WhenCommandBarFocused_StillQuits verifies ctrl+c quits even
+// when the command bar is focused.
+func TestKey_CtrlC_WhenCommandBarFocused_StillQuits(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m.commandBarFocused = true
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c should return a non-nil Cmd even when command bar is focused")
+	}
+	result := cmd()
+	if _, ok := result.(tea.QuitMsg); !ok {
+		t.Errorf("cmd() returned %T, want tea.QuitMsg", result)
+	}
+}
+
+// TestKey_Esc_WhenCommandBarFocused_BlursCommandBar verifies Esc unfocuses the
+// command bar and does NOT forward the key to it.
+func TestKey_Esc_WhenCommandBarFocused_BlursCommandBar(t *testing.T) {
+	cmdBar := newStub("cmdBar", false)
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cmdBar,
+	)
+	m.commandBarFocused = true
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.commandBarFocused {
+		t.Error("commandBarFocused should be false after Esc")
+	}
+	if _, ok := cmdBar.lastMsg.(BlurCommandBarMsg); !ok {
+		t.Errorf("command bar should receive BlurCommandBarMsg on Esc; got %T", cmdBar.lastMsg)
+	}
+}
