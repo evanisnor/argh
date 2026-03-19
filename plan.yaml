@@ -499,7 +499,7 @@ tasks:
 
   - id: 21
     title: Command bar and autocomplete (internal/ui/command_bar.go)
-    status: pending
+    status: done
     depends_on: [14, 16]
     description: >
       Persistent input bar pinned to the bottom. Activated with / or :
