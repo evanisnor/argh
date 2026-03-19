@@ -43,7 +43,7 @@ tasks:
 
   - id: 2
     title: macOS-only runtime guard
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       At startup, check `runtime.GOOS == "darwin"`. If not, print an informative
