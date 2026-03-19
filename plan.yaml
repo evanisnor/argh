@@ -160,7 +160,7 @@ tasks:
 
   - id: 7
     title: GraphQL client — fetch My Pull Requests
-    status: pending
+    status: done
     depends_on: [6, 4]
     description: >
       Use shurcooL/githubv4 to query `search(query: "is:pr is:open author:@me")`
