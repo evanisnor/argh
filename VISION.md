@@ -15,9 +15,8 @@
 5. [Interaction Model & Commands](#5-interaction-model--commands)
 6. [Watches](#6-watches)
 7. [Notification System](#7-notification-system)
-8. [Technical Architecture](#8-technical-architecture)
-9. [Distribution & Dependencies](#9-distribution--dependencies)
-10. [Additional Features](#10-additional-features)
+8. [Architecture & Technical Spec](ARCHITECTURE.md)
+9. [Additional Features](#9-additional-features)
 
 ---
 
@@ -333,213 +332,15 @@ Events are debounced with a 5s window. Repeated state flapping (CI pass→fail�
 
 ---
 
-## 8. Technical Architecture
+## 8. Architecture & Technical Spec
 
-### Technology Stack
-
-| Layer | Choice | Rationale |
-|---|---|---|
-| Language | Go 1.22+ | Performance, single binary distribution, strong concurrency |
-| TUI Framework | [Bubble Tea](https://github.com/charmbracelet/bubbletea) | Elm-architecture TUI, excellent ecosystem |
-| Styling | [Lip Gloss](https://github.com/charmbracelet/lipgloss) | Composable terminal styles, color support |
-| Components | [Bubbles](https://github.com/charmbracelet/bubbles) | Input, spinner, list, viewport, paginator |
-| Markdown | [Glamour](https://github.com/charmbracelet/glamour) | Render PR descriptions in terminal |
-| Diff Viewer | [delta](https://github.com/dandavison/delta) | Beautiful syntax-highlighted diffs |
-| GitHub API | Native Go Clients | `shurcooL/githubv4` + `google/go-github`; `gh` CLI used only for auth token |
-| Config | YAML via `gopkg.in/yaml.v3` | Native Go config management; no external dependencies |
-| Database | SQLite (via `mattn/go-sqlite3` or modern pure-Go variant) | Reactive persistent cache, complex queries, robust offline state |
-| Fuzzy Match | [go-fuzz](https://github.com/sahilm/fuzzy) or [fzf-lib](https://github.com/junegunn/fzf) | Command bar autocomplete |
-
-### Data Flow
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                         argh process                         │
-│                                                              │
-│   ┌──────────┐    ┌───────────────┐    ┌────────────────┐   │
-│   │  GitHub  │◄───│  API Client   │───►│  Cache / DB    │   │
-│   │ GraphQL  │    │  (gh token)   │    │ (Source of     │   │
-│   └──────────┘    └───────────────┘    │  Truth)        │   │
-│                          ▲             └───────┬────────┘   │
-│                   ┌──────┘                     │            │
-│                   │                   ┌────────▼───────┐    │
-│              Poll Ticker              │  Bubble Tea    │    │
-│              (10s default)            │  Model/View    │    │
-│                                       └────────────────┘    │
-│   ┌──────────────┐                            │             │
-│   │  Watch       │◄───────────────────────────┘             │
-│   │  Engine      │─── actions ──► Native API calls          │
-│   └──────────────┘                                          │
-│                                                             │
-│   ┌──────────────┐                                          │
-│   │  Notifier    │◄── state change events                   │
-│   │ (macOS only) │                                          │
-│   └──────────────┘                                          │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Directory Structure
-
-```
-argh/
-├── cmd/
-│   └── argh/
-│       └── main.go
-├── internal/
-│   ├── api/           # GitHub GraphQL + REST client
-│   ├── model/         # Bubble Tea model + update logic
-│   ├── view/          # Rendering functions (panels, command bar, overlays)
-│   ├── watches/       # Watch engine, queue, action executor
-│   ├── notify/        # OS notification dispatch (macOS)
-│   ├── config/        # Config loading, defaults
-│   ├── persistence/   # Reactive cache layer (SQLite)
-│   └── diff/          # Delta integration
-├── Brewfile
-├── VISION.md
-├── go.mod
-└── go.sum
-```
-
-argh defaults to a **global view** of all PRs. If run inside a git repository, it prioritizes that repository's context for certain operations but remains a global dashboard. Fork handling prioritizes `upstream` over `origin` if configured.
-
-### Color Scheme
-
-argh uses `lipgloss.HasDarkBackground()` to automatically adapt to the terminal's color scheme — no configuration needed.
-
-### GitHub API Strategy
-
-- **GraphQL Search** for finding PRs across all repositories (`is:pr author:@me` etc).
-- **GraphQL** for fetching details of those PRs (bulk query).
-- **REST** for mutating operations (create review, merge, add to merge queue).
-- **`gh auth token`** to obtain the authenticated token — no separate OAuth flow needed.
-- **Native Clients**: All API interactions use native Go clients (`shurcooL/githubv4` and `google/go-github`). `gh` is only invoked to retrieve the auth token.
-
-### Reactive Caching Strategy
-
-The UI is powered entirely by a local **SQLite database**.
-- **Single Source of Truth:** The UI *always* renders the state of the database. It does not read directly from API responses.
-- **Reactive Updates:** The API client writes to the database. The database layer emits events/updates. The UI subscribes to these updates and re-renders.
-- **Continuous Persistence:** All data is persisted to disk immediately upon write.
-- **Offline First:** `argh` is fully functional offline (read-only) using the last known state.
-- **Concurrency:** Multiple instances of `argh` can run simultaneously. Each instance polls independently, and SQLite handles concurrent access.
-
-### Polling Strategy & Rate Limits
-
-GitHub enforces two independent limit systems that both apply:
-
-#### Primary Rate Limit (per hour)
-- **5,000 points/hour** for authenticated users (personal access token or `gh` auth)
-- Shared across REST and GraphQL combined
-
-#### Secondary Rate Limits (per minute — the real constraint)
-- **2,000 points/minute** for GraphQL API endpoint
-- **900 points/minute** for REST API endpoints
-- No more than 100 concurrent requests
-
-#### Estimating Our Query Cost
-
-A single argh poll query fetches My PRs + Review Queue with nested reviews, check runs, and review requests. Using GitHub's formula (sum of connection requests ÷ 100, minimum 1):
-
-| Scenario | Connections | Est. Cost |
-|---|---|---|
-| 10 PRs × (reviews + checks + reviewRequests) | ~31 | **1 point** |
-| 30 PRs × (reviews + checks + reviewRequests) | ~91 | **1 point** |
-| 50 PRs × deeply nested connections | ~251 | **3 points** |
-
-> The minimum GraphQL query cost is **1 point**. For a typical argh user with <30 open/review PRs, every poll costs **1 point**.
-
-#### Budget Calculation (typical user, 1pt/poll)
-
-| Budget Slice | Allocation | Available polls |
-|---|---|---|
-| Polling (read) | 4,000 pts/hr | 4,000 polls/hr |
-| Mutations (approve, merge, comment) | 500 pts/hr | 500 actions/hr |
-| Safety headroom | 500 pts/hr | — |
-
-4,000 polls/hour = **~1 poll per second** is theoretically safe against the primary limit.
-The secondary limit (2,000 pts/min for GraphQL) caps this at **2,000 polls/minute**.
-
-#### Chosen Poll Interval: **10 seconds** (default)
-
-| Interval | Polls/hr | Points used/hr | % of primary limit |
-|---|---|---|---|
-| 10s **(default)** | 360 | 360 | **7.2%** |
-| 30s | 120 | 120 | 2.4% |
-| 60s | 60 | 60 | 1.2% |
-
-**10 seconds** gives near-real-time responsiveness while consuming only ~7% of the hourly budget, leaving ample headroom for user-triggered mutations and any other `gh` usage the user has running. Configurable in `~/.config/argh/config.yaml`.
-
-#### Adaptive Back-Off
-
-argh reads the `x-ratelimit-remaining` and `x-ratelimit-reset` response headers on every request and applies automatic back-off:
-
-```
-remaining > 1000  → poll at configured interval (default 10s)
-remaining 500–999 → poll at 2× interval (20s default)
-remaining 100–499 → poll at 5× interval (50s default)
-remaining < 100   → pause polling, show warning in status bar, resume at reset time
-```
-
-The status bar displays current rate limit health: `API ●●●○ 3,847/5,000`.
-
-#### REST Conditional Requests
-
-Where using REST endpoints (e.g., PR details, check runs), argh uses `If-None-Match` (ETag) and `If-Modified-Since` headers. A **304 Not Modified** response costs **0 points** against the primary limit and counts as only 1 point against secondary limits — effectively free polling when nothing has changed.
+For detailed architecture, data flow, and technical specifications, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 9. Distribution & Dependencies
+## 9. Additional Features
 
-### Homebrew Formula
-
-`argh` will be distributed via a custom Homebrew tap: `evanisnor/tap`.
-
-**Formula highlights:**
-- Single Go binary, cross-compiled for macOS arm64 and amd64.
-- Declares runtime dependencies on `gh` and `delta`.
-- Post-install message guides user through `gh auth login` if not already authenticated.
-
-### Brewfile
-
-A `Brewfile` in the repo root will pin all required dependencies:
-
-```ruby
-# Brewfile
-tap "evanisnor/tap"
-
-# Runtime dependencies
-brew "gh"                           # GitHub CLI — authentication and fallback operations
-brew "dandavison/delta/git-delta"   # Syntax-highlighted diff pager
-
-# The app itself (once formula is published)
-brew "evanisnor/tap/argh"
-```
-
-### Installation Flow
-
-```bash
-# Install dependencies + argh in one step
-brew bundle
-
-# Authenticate with GitHub (one-time)
-gh auth login
-
-# Launch
-argh
-```
-
-### Build & Release
-
-- GitHub Actions workflow builds and cross-compiles on tag push. include version number from tag in the build.
-- Artifacts uploaded to GitHub Releases.
-- Update `https://github.com/evanisnor/homebrew-tap` to include the release (see workflows for projects in that tap - cloned repos available in `/Users/evan/Code/github.com/evanisnor`)
-- `goreleaser` for reproducible release builds.
-
----
-
-## 10. Additional Features
-
-### 10.1 PR Status Bar Overlay (`argh --status`)
+### 9.1 PR Status Bar Overlay (`argh --status`)
 A one-line tmux/terminal status bar output mode: prints a condensed summary (counts, CI state) suitable for embedding in tmux status bar or shell prompt.
 
 ```bash
@@ -548,22 +349,22 @@ set -g status-right '#(argh --status)'
 # Output: ↑3 PRs  ✗1 CI  ↓2 review
 ```
 
-### 10.2 Smart Review Assignment
+### 9.2 Smart Review Assignment
 When running `:request #pr`, show a ranked list of suggested reviewers based on:
 - Who owns the most lines changed (via `git blame` heuristic from PR diff)
 - Who reviewed similar PRs recently
 - Team CODEOWNERS rules
 
-### 10.3 Inline Comment Thread Browser
+### 9.3 Inline Comment Thread Browser
 In the detail pane, navigate through open review threads with `n`/`N`. Mark threads as resolved without opening the browser.
 
-### 10.4 Per-Repo Configuration
+### 9.4 Per-Repo Configuration
 Support a `.argh.yaml` in the repo root for repo-specific overrides: default reviewers, label conventions, merge strategy preference.
 
-### 10.5 Audit Log
+### 9.5 Audit Log
 Every action `argh` takes (approve, merge, request, comment) is appended to `~/.local/share/argh/audit.log` with timestamp and PR number. Makes it easy to understand what the watch did.
 
-### 10.6 Do Not Disturb Mode
+### 9.6 Do Not Disturb Mode
 Suppress all system notifications without stopping polling or watches. Useful during deep work, meetings, or outside working hours.
 
 - Toggle with `:dnd` or the keyboard shortcut `D` — status bar shows `🔕 DND` when active
@@ -581,7 +382,7 @@ do_not_disturb:
       all_day: true
 ```
 
-### 10.7 Sleep Schedule
+### 9.7 Sleep Schedule
 Reduce polling frequency during off-hours to avoid burning API budget and unnecessary background activity overnight and on weekends. Distinct from DND — sleep affects polling rate, not notifications.
 
 - During sleep hours, polling slows to a configurable reduced interval (default: **5 minutes**)
