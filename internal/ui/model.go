@@ -24,6 +24,35 @@ type DBEventMsg struct {
 	Event eventbus.Event
 }
 
+// MoveFocusMsg is sent to the focused panel when the user presses j/k or ↑/↓.
+type MoveFocusMsg struct {
+	Down bool // true = j/↓, false = k/↑
+}
+
+// FocusCommandBarMsg is sent to the command bar when the user presses / or :.
+type FocusCommandBarMsg struct{}
+
+// BlurCommandBarMsg is sent to the command bar when the user presses Esc.
+type BlurCommandBarMsg struct{}
+
+// OpenPRMsg is sent to the focused panel when the user presses o.
+type OpenPRMsg struct{}
+
+// ShowDiffMsg is sent to the focused panel when the user presses d.
+type ShowDiffMsg struct{}
+
+// ApprovePRMsg is sent to the Review Queue panel when the user presses a.
+type ApprovePRMsg struct{}
+
+// RequestReviewMsg is sent to the focused panel when the user presses r.
+type RequestReviewMsg struct{}
+
+// ForceReloadMsg is produced as a command when the user presses R.
+type ForceReloadMsg struct{}
+
+// ToggleDNDMsg is produced as a command when the user presses D.
+type ToggleDNDMsg struct{}
+
 // Subscriber is the subset of the event bus the root model requires.
 type Subscriber interface {
 	Subscribe(handler func(eventbus.Event)) func()
@@ -82,19 +111,21 @@ func newTheme(dark bool) Theme {
 // Model is the root Bubble Tea model. It holds references to all sub-models
 // and owns the top-level Update dispatch and View composition.
 type Model struct {
-	version     string
-	username    string
-	focused     Panel
-	myPRs       SubModel
-	reviewQueue SubModel
-	watches     SubModel
-	detailPane  SubModel
-	commandBar  SubModel
-	detailOpen  bool
-	statusText  string
-	eventCh     chan eventbus.Event
-	unsubscribe func()
-	theme       Theme
+	version          string
+	username         string
+	focused          Panel
+	myPRs            SubModel
+	reviewQueue      SubModel
+	watches          SubModel
+	detailPane       SubModel
+	commandBar       SubModel
+	detailOpen       bool
+	helpVisible      bool
+	commandBarFocused bool
+	statusText       string
+	eventCh          chan eventbus.Event
+	unsubscribe      func()
+	theme            Theme
 }
 
 // New creates a root Model and subscribes to the event bus. Call Init() to
@@ -253,9 +284,7 @@ func statusTextForEvent(e eventbus.Event) string {
 	}
 }
 
-// handleKey handles global key bindings. Individual key actions are delegated
-// to later tasks (15 onwards); here we only handle the bindings that affect
-// root model state.
+// handleKey handles all global key bindings.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -269,9 +298,76 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter", "p":
 		m.detailOpen = !m.detailOpen
+
+	case "j", "down":
+		return m.dispatchToFocused(MoveFocusMsg{Down: true})
+
+	case "k", "up":
+		return m.dispatchToFocused(MoveFocusMsg{Down: false})
+
+	case "/", ":":
+		m.commandBarFocused = true
+		var cmd tea.Cmd
+		m.commandBar, cmd = m.commandBar.Update(FocusCommandBarMsg{})
+		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+
+	case "esc":
+		if m.helpVisible {
+			m.helpVisible = false
+		} else if m.commandBarFocused {
+			m.commandBarFocused = false
+			var cmd tea.Cmd
+			m.commandBar, cmd = m.commandBar.Update(BlurCommandBarMsg{})
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
+
+	case "o":
+		return m.dispatchToFocused(OpenPRMsg{})
+
+	case "d":
+		return m.dispatchToFocused(ShowDiffMsg{})
+
+	case "a":
+		if m.focused == PanelReviewQueue {
+			var cmd tea.Cmd
+			m.reviewQueue, cmd = m.reviewQueue.Update(ApprovePRMsg{})
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
+
+	case "r":
+		return m.dispatchToFocused(RequestReviewMsg{})
+
+	case "?":
+		m.helpVisible = !m.helpVisible
+
+	case "R":
+		return m, tea.Batch(
+			func() tea.Msg { return ForceReloadMsg{} },
+			waitForDBEvent(m.eventCh),
+		)
+
+	case "D":
+		return m, tea.Batch(
+			func() tea.Msg { return ToggleDNDMsg{} },
+			waitForDBEvent(m.eventCh),
+		)
 	}
 
 	return m, waitForDBEvent(m.eventCh)
+}
+
+// dispatchToFocused sends msg to whichever panel currently holds keyboard focus.
+func (m Model) dispatchToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch m.focused {
+	case PanelMyPRs:
+		m.myPRs, cmd = m.myPRs.Update(msg)
+	case PanelReviewQueue:
+		m.reviewQueue, cmd = m.reviewQueue.Update(msg)
+	case PanelWatches:
+		m.watches, cmd = m.watches.Update(msg)
+	}
+	return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 }
 
 // View composes the full terminal layout.

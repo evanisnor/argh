@@ -583,6 +583,333 @@ func TestKey_CtrlCQuits(t *testing.T) {
 	}
 }
 
+// ── keyboard navigation tests ─────────────────────────────────────────────────
+
+// keyRune builds a tea.KeyMsg for a printable rune.
+func keyRune(r rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+}
+
+// TestKey_JK_DispatchMoveFocusToFocusedPanel verifies j/k/↓/↑ send MoveFocusMsg
+// to the currently focused panel and do not touch other panels.
+func TestKey_JK_DispatchMoveFocusToFocusedPanel(t *testing.T) {
+	tests := []struct {
+		name           string
+		key            tea.KeyMsg
+		initialFocused Panel
+		wantDown       bool
+		wantReceiver   string // "myPRs", "reviewQueue", or "watches"
+	}{
+		{"j→myPRs", keyRune('j'), PanelMyPRs, true, "myPRs"},
+		{"down→myPRs", tea.KeyMsg{Type: tea.KeyDown}, PanelMyPRs, true, "myPRs"},
+		{"k→myPRs", keyRune('k'), PanelMyPRs, false, "myPRs"},
+		{"up→myPRs", tea.KeyMsg{Type: tea.KeyUp}, PanelMyPRs, false, "myPRs"},
+		{"j→reviewQueue", keyRune('j'), PanelReviewQueue, true, "reviewQueue"},
+		{"k→reviewQueue", keyRune('k'), PanelReviewQueue, false, "reviewQueue"},
+		{"j→watches", keyRune('j'), PanelWatches, true, "watches"},
+		{"k→watches", keyRune('k'), PanelWatches, false, "watches"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			myPRs := newStub("myPRs", true)
+			rq := newStub("reviewQueue", true)
+			watches := newStub("watches", true)
+			m, _ := newTestModel(myPRs, rq, watches, newStub("detail", false), newStub("cmdBar", false))
+			m.focused = tt.initialFocused
+
+			m = applyMsg(m, tt.key)
+
+			var gotMsg tea.Msg
+			switch tt.wantReceiver {
+			case "myPRs":
+				gotMsg = m.myPRs.(*stubSubModel).lastMsg
+			case "reviewQueue":
+				gotMsg = m.reviewQueue.(*stubSubModel).lastMsg
+			case "watches":
+				gotMsg = m.watches.(*stubSubModel).lastMsg
+			}
+
+			mv, ok := gotMsg.(MoveFocusMsg)
+			if !ok {
+				t.Fatalf("expected MoveFocusMsg, got %T", gotMsg)
+			}
+			if mv.Down != tt.wantDown {
+				t.Errorf("MoveFocusMsg.Down = %v, want %v", mv.Down, tt.wantDown)
+			}
+
+			// Other panels should not receive the message.
+			if tt.wantReceiver != "myPRs" && m.myPRs.(*stubSubModel).lastMsg != nil {
+				t.Error("myPRs should not receive message when not focused")
+			}
+			if tt.wantReceiver != "reviewQueue" && m.reviewQueue.(*stubSubModel).lastMsg != nil {
+				t.Error("reviewQueue should not receive message when not focused")
+			}
+			if tt.wantReceiver != "watches" && m.watches.(*stubSubModel).lastMsg != nil {
+				t.Error("watches should not receive message when not focused")
+			}
+		})
+	}
+}
+
+// TestKey_SlashAndColon_FocusCommandBar verifies / and : set commandBarFocused
+// and send FocusCommandBarMsg to the command bar.
+func TestKey_SlashAndColon_FocusCommandBar(t *testing.T) {
+	for _, key := range []tea.KeyMsg{keyRune('/'), keyRune(':')} {
+		t.Run(key.String(), func(t *testing.T) {
+			cmdBar := newStub("cmdBar", false)
+			m, _ := newTestModel(
+				newStub("myPRs", true), newStub("reviewQueue", true),
+				newStub("watches", false), newStub("detail", false), cmdBar,
+			)
+
+			m = applyMsg(m, key)
+
+			if !m.commandBarFocused {
+				t.Error("commandBarFocused should be true after pressing", key.String())
+			}
+			if _, ok := m.commandBar.(*stubSubModel).lastMsg.(FocusCommandBarMsg); !ok {
+				t.Errorf("commandBar should receive FocusCommandBarMsg, got %T",
+					m.commandBar.(*stubSubModel).lastMsg)
+			}
+		})
+	}
+}
+
+// TestKey_Esc_DismissesHelpOverlay verifies Esc clears helpVisible when the
+// help overlay is open.
+func TestKey_Esc_DismissesHelpOverlay(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.helpVisible = true
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.helpVisible {
+		t.Error("helpVisible should be false after Esc when overlay was open")
+	}
+	if m.commandBarFocused {
+		t.Error("commandBarFocused should remain false")
+	}
+}
+
+// TestKey_Esc_UnfocusesCommandBar verifies Esc clears commandBarFocused and
+// sends BlurCommandBarMsg when the command bar is focused.
+func TestKey_Esc_UnfocusesCommandBar(t *testing.T) {
+	cmdBar := newStub("cmdBar", false)
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), cmdBar,
+	)
+	m.commandBarFocused = true
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.commandBarFocused {
+		t.Error("commandBarFocused should be false after Esc")
+	}
+	if _, ok := m.commandBar.(*stubSubModel).lastMsg.(BlurCommandBarMsg); !ok {
+		t.Errorf("commandBar should receive BlurCommandBarMsg, got %T",
+			m.commandBar.(*stubSubModel).lastMsg)
+	}
+}
+
+// TestKey_Esc_NoOp verifies Esc is a no-op when neither overlay nor command
+// bar are active.
+func TestKey_Esc_NoOp(t *testing.T) {
+	cmdBar := newStub("cmdBar", false)
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), cmdBar,
+	)
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.helpVisible {
+		t.Error("helpVisible should remain false")
+	}
+	if m.commandBarFocused {
+		t.Error("commandBarFocused should remain false")
+	}
+	if m.commandBar.(*stubSubModel).lastMsg != nil {
+		t.Error("commandBar should not receive any message for no-op Esc")
+	}
+}
+
+// TestKey_O_SendsOpenPRToFocusedPanel verifies o dispatches OpenPRMsg to the
+// focused panel.
+func TestKey_O_SendsOpenPRToFocusedPanel(t *testing.T) {
+	myPRs := newStub("myPRs", true)
+	m, _ := newTestModel(myPRs, newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+
+	m = applyMsg(m, keyRune('o'))
+
+	if _, ok := m.myPRs.(*stubSubModel).lastMsg.(OpenPRMsg); !ok {
+		t.Errorf("myPRs should receive OpenPRMsg, got %T", m.myPRs.(*stubSubModel).lastMsg)
+	}
+}
+
+// TestKey_D_SendsShowDiffToFocusedPanel verifies d dispatches ShowDiffMsg.
+func TestKey_D_SendsShowDiffToFocusedPanel(t *testing.T) {
+	rq := newStub("reviewQueue", true)
+	m, _ := newTestModel(newStub("myPRs", true), rq,
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelReviewQueue
+
+	m = applyMsg(m, keyRune('d'))
+
+	if _, ok := m.reviewQueue.(*stubSubModel).lastMsg.(ShowDiffMsg); !ok {
+		t.Errorf("reviewQueue should receive ShowDiffMsg, got %T",
+			m.reviewQueue.(*stubSubModel).lastMsg)
+	}
+}
+
+// TestKey_A_ApprovesOnlyFromReviewQueue verifies a sends ApprovePRMsg only
+// when the Review Queue panel is focused.
+func TestKey_A_ApprovesOnlyFromReviewQueue(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialFocused Panel
+		wantApprove    bool
+	}{
+		{"review queue → approves", PanelReviewQueue, true},
+		{"my prs → no action", PanelMyPRs, false},
+		{"watches → no action", PanelWatches, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			myPRs := newStub("myPRs", true)
+			rq := newStub("reviewQueue", true)
+			watches := newStub("watches", true)
+			m, _ := newTestModel(myPRs, rq, watches,
+				newStub("detail", false), newStub("cmdBar", false))
+			m.focused = tt.initialFocused
+
+			m = applyMsg(m, keyRune('a'))
+
+			gotMsg := m.reviewQueue.(*stubSubModel).lastMsg
+			_, isApprove := gotMsg.(ApprovePRMsg)
+			if tt.wantApprove && !isApprove {
+				t.Errorf("reviewQueue should receive ApprovePRMsg when focused, got %T", gotMsg)
+			}
+			if !tt.wantApprove && isApprove {
+				t.Error("reviewQueue should NOT receive ApprovePRMsg when not focused")
+			}
+			// myPRs should never receive ApprovePRMsg
+			if _, ok := m.myPRs.(*stubSubModel).lastMsg.(ApprovePRMsg); ok {
+				t.Error("myPRs should never receive ApprovePRMsg")
+			}
+		})
+	}
+}
+
+// TestKey_R_SendsRequestReviewToFocusedPanel verifies r dispatches RequestReviewMsg.
+func TestKey_R_SendsRequestReviewToFocusedPanel(t *testing.T) {
+	myPRs := newStub("myPRs", true)
+	m, _ := newTestModel(myPRs, newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+
+	m = applyMsg(m, keyRune('r'))
+
+	if _, ok := m.myPRs.(*stubSubModel).lastMsg.(RequestReviewMsg); !ok {
+		t.Errorf("myPRs should receive RequestReviewMsg, got %T",
+			m.myPRs.(*stubSubModel).lastMsg)
+	}
+}
+
+// TestKey_QuestionMark_TogglesHelpVisible verifies ? toggles helpVisible.
+func TestKey_QuestionMark_TogglesHelpVisible(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+
+	if m.helpVisible {
+		t.Fatal("helpVisible should be false initially")
+	}
+
+	m = applyMsg(m, keyRune('?'))
+	if !m.helpVisible {
+		t.Error("helpVisible should be true after first ?")
+	}
+
+	m = applyMsg(m, keyRune('?'))
+	if m.helpVisible {
+		t.Error("helpVisible should be false after second ?")
+	}
+}
+
+// TestKey_CapitalR_ProducesForceReloadMsg verifies R returns a batch Cmd that
+// contains a ForceReloadMsg when executed.
+func TestKey_CapitalR_ProducesForceReloadMsg(t *testing.T) {
+	m, sub := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	// Pre-fill the channel so waitForDBEvent in the batch returns without blocking.
+	sub.publish(eventbus.Event{Type: eventbus.PRUpdated})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("R")})
+	if cmd == nil {
+		t.Fatal("R should return a non-nil Cmd")
+	}
+
+	batchMsg, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("R Cmd should produce tea.BatchMsg")
+	}
+
+	var found bool
+	for _, c := range batchMsg {
+		if c != nil {
+			if _, isReload := c().(ForceReloadMsg); isReload {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("R batch should contain a ForceReloadMsg")
+	}
+}
+
+// TestKey_CapitalD_ProducesToggleDNDMsg verifies D returns a batch Cmd that
+// contains a ToggleDNDMsg when executed.
+func TestKey_CapitalD_ProducesToggleDNDMsg(t *testing.T) {
+	m, sub := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	sub.publish(eventbus.Event{Type: eventbus.PRUpdated})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	if cmd == nil {
+		t.Fatal("D should return a non-nil Cmd")
+	}
+
+	batchMsg, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("D Cmd should produce tea.BatchMsg")
+	}
+
+	var found bool
+	for _, c := range batchMsg {
+		if c != nil {
+			if _, isDND := c().(ToggleDNDMsg); isDND {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("D batch should contain a ToggleDNDMsg")
+	}
+}
+
 // TestNew_DropsEventsWhenChannelFull verifies that the subscriber created by New
 // does not block when the internal event channel is full (64 buffered slots).
 func TestNew_DropsEventsWhenChannelFull(t *testing.T) {

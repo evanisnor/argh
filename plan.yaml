@@ -340,7 +340,7 @@ tasks:
 
   - id: 15
     title: Global keyboard navigation
-    status: pending
+    status: done
     depends_on: [14]
     description: >
       Handle global key bindings in the root Update():
