@@ -900,7 +900,7 @@ tasks:
 
   - id: 36
     title: goreleaser configuration and cross-compilation
-    status: pending
+    status: done
     depends_on: [1]
     description: >
       Add .goreleaser.yaml targeting macOS arm64 and amd64. Embed version from

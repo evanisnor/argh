@@ -1,0 +1,61 @@
+version: 2
+
+project_name: argh
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: argh
+    main: ./cmd/argh
+    binary: argh
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+    env:
+      - CGO_ENABLED=1
+
+universal_binaries:
+  - id: argh-universal
+    ids:
+      - argh
+    replace: true
+
+archives:
+  - id: argh
+    ids:
+      - argh-universal
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - README*
+      - LICENSE*
+      - Brewfile
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: evanisnor
+    name: argh
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
