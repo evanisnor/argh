@@ -115,3 +115,26 @@ type StubPublisher struct {
 func (s *StubPublisher) Publish(e eventbus.Event) {
 	s.Events = append(s.Events, e)
 }
+
+// StubReviewQueueStore is a test double for ReviewQueueStore.
+// It embeds StubPRStore for the shared PR methods and adds InsertTimelineEvent.
+type StubReviewQueueStore struct {
+	*StubPRStore
+	InsertTimelineEventFunc func(te persistence.TimelineEvent) error
+
+	InsertedTimelineEvents []persistence.TimelineEvent
+}
+
+// NewStubReviewQueueStore returns a StubReviewQueueStore whose defaults succeed
+// and report every PR as new (GetPullRequest returns sql.ErrNoRows).
+func NewStubReviewQueueStore() *StubReviewQueueStore {
+	return &StubReviewQueueStore{
+		StubPRStore:             NewStubPRStore(),
+		InsertTimelineEventFunc: func(te persistence.TimelineEvent) error { return nil },
+	}
+}
+
+func (s *StubReviewQueueStore) InsertTimelineEvent(te persistence.TimelineEvent) error {
+	s.InsertedTimelineEvents = append(s.InsertedTimelineEvents, te)
+	return s.InsertTimelineEventFunc(te)
+}

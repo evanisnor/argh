@@ -184,7 +184,7 @@ tasks:
 
   - id: 8
     title: GraphQL client — fetch Review Queue
-    status: pending
+    status: done
     depends_on: [6, 4]
     description: >
       Query `search(query: "is:pr is:open review-requested:@me")` to find PRs
