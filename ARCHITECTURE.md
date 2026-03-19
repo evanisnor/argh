@@ -18,6 +18,7 @@
 | **Config** | YAML via `gopkg.in/yaml.v3` | Native Go config management; no external dependencies |
 | **Database** | SQLite (`mattn/go-sqlite3`) | Reactive persistent cache, complex queries, robust offline state |
 | **Fuzzy Match** | `go-fuzz` or `fzf-lib` | Command bar autocomplete |
+| **Notifications** | Go native macOS Notification Center library (e.g., `gen2brain/beeep` or `deckarep/gosx-notifier`) | No external runtime dependencies; macOS-only for v1 |
 
 ## High-Level Architecture
 
@@ -32,7 +33,7 @@ graph TD
         API[API Client<br>(gh token)]
         DB[(Cache / DB<br>Source of Truth)]
         UI[Bubble Tea<br>Model/View]
-        Watch[Watch Engine]
+        Watch[Watch Engine<br>(goroutine)]
         Notify[Notifier<br>(macOS only)]
     end
     
@@ -43,8 +44,9 @@ graph TD
     API -->|Write| DB
     DB -->|Emit Events| UI
     DB -->|State Changes| Notify
+    DB -->|State Changes| Watch
     UI -->|Render| Terminal
-    UI -->|User Actions| Watch
+    UI -->|User Commands| Watch
     Watch -->|Execute Actions| API
 ```
 
@@ -52,9 +54,10 @@ graph TD
 
 1.  **Single Source of Truth**: The UI *always* renders the state of the database. It never reads directly from API responses.
 2.  **Reactive Updates**: The API client writes to the database. The database layer emits events/updates. The UI subscribes to these updates and re-renders.
-3.  **Continuous Persistence**: All data is persisted to disk immediately upon write.
-4.  **Offline First**: `argh` is fully functional offline (read-only) using the last known state.
-5.  **Concurrency**: Multiple instances can run simultaneously; SQLite handles concurrent access.
+3.  **Watch Engine Independence**: The Watch Engine runs as an independent goroutine, subscribing to DB state change events directly. It evaluates watch conditions and executes actions without routing through the UI.
+4.  **Continuous Persistence**: All data is persisted to disk immediately upon write.
+5.  **Offline First**: `argh` is fully functional offline (read-only) using the last known state.
+6.  **Concurrency**: Multiple instances can run simultaneously; SQLite handles concurrent access.
 
 ## Directory Structure
 
@@ -65,8 +68,13 @@ argh/
 │       └── main.go       # Entry point
 ├── internal/
 │   ├── api/              # GitHub GraphQL + REST client
-│   ├── model/            # Bubble Tea model + update logic
-│   ├── view/             # Rendering functions (panels, command bar)
+│   ├── ui/               # Bubble Tea model, update logic, and rendering
+│   │   ├── model.go      # Root model struct and Update loop
+│   │   ├── panel_prs.go  # My Pull Requests panel
+│   │   ├── panel_reviews.go  # Review Queue panel
+│   │   ├── panel_watches.go  # Watches panel
+│   │   ├── panel_detail.go   # Detail/Preview pane
+│   │   └── command_bar.go    # Command bar and autocomplete
 │   ├── watches/          # Watch engine, queue, action executor
 │   ├── notify/           # OS notification dispatch (macOS)
 │   ├── config/           # Config loading, defaults

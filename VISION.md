@@ -31,7 +31,7 @@
 
 ### Non-Goals
 - Full GitHub project management (issues, milestones, releases) — out of scope.
-- Git operations (commit, push, rebase) — delegate to the user's existing tooling.
+- Git write operations (commit, push, rebase) — delegate to the user's existing tooling. Read-only Git operations (e.g., `git blame`) are permitted where useful (see §9.2).
 - Support for GitLab, Bitbucket, or other providers.
 - A web UI or Electron wrapper.
 - Windows or Linux support (v1 is macOS only; enforced by runtime check).
@@ -92,7 +92,23 @@ Displays pull requests where the current user is assigned as a reviewer, or is m
 | Author | GitHub username of PR author |
 | CI | Aggregated check state |
 | Age | Relative time since last state change |
-| Urgency | Derived from: staleness + CI state + author wait time |
+| Urgency | Derived from: staleness + CI state + author wait time (see formula below) |
+
+**Urgency Formula (3 tiers):**
+
+Urgency is calculated as a base staleness tier adjusted by CI state and author wait time, clamped to `[1, 3]`:
+
+| Step | Signal | Rule |
+|---|---|---|
+| Base | Staleness (time since last PR activity) | <4h → 1 · 4–24h → 2 · >24h → 3 |
+| Modifier | CI state | Failing → +1 · Passing → -1 · Running/None → ±0 |
+| Modifier | Author wait time | Author waiting >72h → +1 |
+
+| Score | Display | Meaning |
+|---|---|---|
+| 3 | `●●●` | High urgency — act soon |
+| 2 | `●●○` | Medium urgency |
+| 1 | `●○○` | Low urgency |
 
 **Behaviors:**
 - Sorted by urgency score (descending).
@@ -194,6 +210,19 @@ A rule-based engine that watches PR state and triggers actions automatically or 
 - Post a comment
 - Add a label
 - Desktop notification
+
+**Trigger Syntax:**
+
+Triggers are composed using two combinators:
+- `+` — AND: all conditions must be true simultaneously
+- `,` — OR: any condition triggers the watch
+
+```
+on:approved+ci         # fires when approved AND CI passes
+on:ci-pass,approved    # fires when CI passes OR when approved
+on:ci-pass             # fires on CI pass alone
+on:24h-stale           # fires after 24h with no activity
+```
 
 **Queue Management:**
 - `:watch [#pr] on:approved merge:squash` — create a merge watch when approved
@@ -313,7 +342,7 @@ Triggered for high-signal events:
 - You are requested as a reviewer on a new PR
 - Automation action executed
 
-Uses `terminal-notifier` on macOS. Linux/Windows support planned for future versions. Configurable per-event in `~/.config/argh/config.yaml`.
+Uses the macOS Notification Center via a Go native library (no external `terminal-notifier` dependency required). Linux/Windows support planned for future versions. Configurable per-event in `~/.config/argh/config.yaml`.
 
 ```yaml
 notifications:
@@ -341,7 +370,7 @@ For detailed architecture, data flow, and technical specifications, see [ARCHITE
 ## 9. Additional Features
 
 ### 9.1 PR Status Bar Overlay (`argh --status`)
-A one-line tmux/terminal status bar output mode: prints a condensed summary (counts, CI state) suitable for embedding in tmux status bar or shell prompt.
+A one-line tmux/terminal status bar output mode: prints a condensed summary (counts, CI state) suitable for embedding in tmux status bar or shell prompt. Reads state directly from the local SQLite database — **the main `argh` process must be running** to keep the database current. Outputs stale data gracefully if the database exists but polling has stopped.
 
 ```bash
 # In .tmux.conf
@@ -351,9 +380,11 @@ set -g status-right '#(argh --status)'
 
 ### 9.2 Smart Review Assignment
 When running `:request #pr`, show a ranked list of suggested reviewers based on:
-- Who owns the most lines changed (via `git blame` heuristic from PR diff)
-- Who reviewed similar PRs recently
-- Team CODEOWNERS rules
+- Who owns the most lines changed (via `git blame` on the local repo — used read-only if available)
+- Who reviewed similar PRs recently (via GitHub API history)
+- Team CODEOWNERS rules (via GitHub API)
+
+All three signals are optional and used when available; the command works without any of them.
 
 ### 9.3 Inline Comment Thread Browser
 In the detail pane, navigate through open review threads with `n`/`N`. Mark threads as resolved without opening the browser.
