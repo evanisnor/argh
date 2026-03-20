@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -422,6 +423,8 @@ func containsAny(s string, subs ...string) bool {
 
 // handleKey handles all global key bindings.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	slog.Debug("model.handleKey", "key", msg.String(), "commandBarFocused", m.commandBarFocused)
+
 	// When the command bar is focused, every keystroke goes directly to it
 	// so the textinput receives every character. Only ctrl+c (quit) and esc
 	// (blur) are kept as root-model concerns.
@@ -430,6 +433,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			// handled by the switch below
 		default:
+			slog.Debug("model.handleKey: forwarding to command bar", "key", msg.String())
 			var cmd tea.Cmd
 			m.commandBar, cmd = m.commandBar.Update(msg)
 			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
@@ -463,6 +467,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.dispatchToFocused(MoveFocusMsg{Down: false})
 
 	case "/", ":":
+		slog.Debug("model.handleKey: activating command bar", "key", msg.String())
 		m.commandBarFocused = true
 		var cmd tea.Cmd
 		m.commandBar, cmd = m.commandBar.Update(FocusCommandBarMsg{})

@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -51,6 +53,13 @@ var teaRun = func(m tea.Model) error {
 // randRead is the function used to generate random bytes in newWatchID.
 // It is a variable so tests can inject a failing implementation.
 var randRead = rand.Read
+
+// debugLogMkdirAll and debugLogOpenFile are variables so tests can inject
+// failures when exercising the debug log setup.
+var debugLogMkdirAll = os.MkdirAll
+var debugLogOpenFile = func(name string, flag int, perm os.FileMode) (io.WriteCloser, error) {
+	return os.OpenFile(name, flag, perm)
+}
 
 // checkPlatform returns an error if goos is not "darwin".
 // goos is accepted as a parameter so tests can inject values without
@@ -135,6 +144,7 @@ type tuiDeps struct {
 	loadConfig   func() (config.Config, error)
 	openDB       func() (*persistence.DB, error)
 	auditLogPath func() (string, error)
+	debugLogPath func() (string, error)
 	newTicker    api.NewTickerFunc // nil → api.NewRealTicker
 	runProgram   func(m tea.Model) error
 }
@@ -152,6 +162,7 @@ func productionDeps() tuiDeps {
 			return persistence.Open(persistence.OSFilesystem{})
 		},
 		auditLogPath: audit.DefaultLogPath,
+		debugLogPath: debugLogDefaultPath,
 		newTicker:    nil, // use api.NewRealTicker
 		runProgram:   teaRun,
 	}
@@ -173,10 +184,39 @@ func newWatchID() string {
 	return fmt.Sprintf("%x", b)
 }
 
+// debugLogDefaultPath returns the default debug log path:
+// ~/.local/share/argh/debug.log
+func debugLogDefaultPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", "argh", "debug.log"), nil
+}
+
+// openDebugLog opens (or creates/appends) the debug log file, creating parent
+// directories as needed. It uses debugLogMkdirAll and debugLogOpenFile so
+// tests can inject failures.
+func openDebugLog(path string) (io.WriteCloser, error) {
+	if err := debugLogMkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("creating debug log directory: %w", err)
+	}
+	return debugLogOpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+}
+
 // runTUI wires all application components and starts the Bubble Tea program.
 func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
+
+	// ── Debug logger (best-effort) ────────────────────────────────────────────
+
+	if logPath, err := deps.debugLogPath(); err == nil {
+		if w, err := openDebugLog(logPath); err == nil {
+			slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			defer w.Close()
+		}
+	}
 
 	creds, err := deps.authenticate(ctx)
 	if err != nil {

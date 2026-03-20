@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -168,6 +169,7 @@ func (c *CommandBar) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 
 // handleKey processes key events when the command bar is focused.
 func (c *CommandBar) handleKey(msg tea.KeyMsg) (SubModel, tea.Cmd) {
+	slog.Debug("commandBar.handleKey", "key", msg.String(), "inputBefore", c.input.Value())
 	switch msg.String() {
 	case "tab":
 		c.acceptTopSuggestion()
@@ -212,6 +214,7 @@ func (c *CommandBar) handleKey(msg tea.KeyMsg) (SubModel, tea.Cmd) {
 	// Forward all other keys to the textinput and refresh suggestions.
 	var cmd tea.Cmd
 	c.input, cmd = c.input.Update(msg)
+	slog.Debug("commandBar.handleKey: textinput updated", "inputAfter", c.input.Value())
 	c.histCursor = -1
 	c.refreshSuggestions()
 	return c, cmd

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +168,9 @@ func happyDeps(t *testing.T) tuiDeps {
 		},
 		auditLogPath: func() (string, error) {
 			return t.TempDir() + "/audit.log", nil
+		},
+		debugLogPath: func() (string, error) {
+			return filepath.Join(t.TempDir(), "debug.log"), nil
 		},
 		newTicker: stubNewTicker,
 		runProgram: func(_ tea.Model) error {
@@ -548,6 +553,98 @@ func TestNewWatchID_ErrorFallback(t *testing.T) {
 			t.Errorf("newWatchID() fallback returned non-decimal character %q in %q", c, id)
 		}
 	}
+}
+
+// ── debug log setup ───────────────────────────────────────────────────────────
+
+func TestRunTUI_DebugLogPathFailure(t *testing.T) {
+	deps := happyDeps(t)
+	deps.debugLogPath = func() (string, error) {
+		return "", errors.New("no home dir")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := runTUI(ctx, "test", deps); err != nil {
+		t.Errorf("runTUI() with debug log path failure err = %v, want nil", err)
+	}
+}
+
+func TestRunTUI_DebugLogOpenFailure(t *testing.T) {
+	deps := happyDeps(t)
+	orig := debugLogMkdirAll
+	debugLogMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("no perm") }
+	defer func() { debugLogMkdirAll = orig }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := runTUI(ctx, "test", deps); err != nil {
+		t.Errorf("runTUI() with debug log open failure err = %v, want nil", err)
+	}
+}
+
+func TestDebugLogDefaultPath_ReturnsNonEmpty(t *testing.T) {
+	path, err := debugLogDefaultPath()
+	if err != nil {
+		t.Fatalf("debugLogDefaultPath() error: %v", err)
+	}
+	if path == "" {
+		t.Error("debugLogDefaultPath() returned empty string")
+	}
+	if !strings.HasSuffix(path, "debug.log") {
+		t.Errorf("debugLogDefaultPath() = %q, want suffix debug.log", path)
+	}
+}
+
+func TestDebugLogDefaultPath_HomeDirError(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	// On macOS os.UserHomeDir falls back to the passwd database, so unsetting
+	// HOME may still succeed. Accept either outcome gracefully.
+	path, err := debugLogDefaultPath()
+	if err != nil {
+		return // error path covered
+	}
+	if path == "" {
+		t.Error("debugLogDefaultPath() returned empty path without error")
+	}
+}
+
+func TestOpenDebugLog_Success(t *testing.T) {
+	w, err := openDebugLog(filepath.Join(t.TempDir(), "debug.log"))
+	if err != nil {
+		t.Fatalf("openDebugLog() unexpected error: %v", err)
+	}
+	w.Close()
+}
+
+func TestOpenDebugLog_MkdirAllError(t *testing.T) {
+	orig := debugLogMkdirAll
+	debugLogMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("permission denied") }
+	defer func() { debugLogMkdirAll = orig }()
+
+	_, err := openDebugLog("/some/path/debug.log")
+	if err == nil || !strings.Contains(err.Error(), "creating debug log directory") {
+		t.Errorf("openDebugLog() error = %v, want 'creating debug log directory'", err)
+	}
+}
+
+func TestOpenDebugLog_OpenFileError(t *testing.T) {
+	orig := debugLogOpenFile
+	debugLogOpenFile = func(_ string, _ int, _ os.FileMode) (io.WriteCloser, error) {
+		return nil, errors.New("permission denied")
+	}
+	defer func() { debugLogOpenFile = orig }()
+
+	_, err := openDebugLog(filepath.Join(t.TempDir(), "debug.log"))
+	if err == nil {
+		t.Error("openDebugLog() expected error, got nil")
+	}
+}
+
+func TestProductionDeps_DebugLogPath(t *testing.T) {
+	deps := productionDeps()
+	// Just calls the closure; may succeed or fail depending on env.
+	_, _ = deps.debugLogPath()
 }
 
 // ── runTUI nil ticker ─────────────────────────────────────────────────────────
