@@ -1065,3 +1065,31 @@ tasks:
       Add tests that focus the command bar, set suggestions, and call View(). Verify
       that suggestion lines appear before the input line in the returned string.
       Test with 0, 1, and maxSuggestions suggestions. Test unfocused state is unchanged.
+
+  - id: 46
+    title: Overlay suggestion pane above command bar without pushing panels off-screen
+    status: done
+    depends_on: [45]
+    description: >
+      CommandBar.View() previously returned suggestion lines prepended to the input
+      line, causing the total layout height to exceed the terminal when suggestions
+      were shown. Fix by decoupling suggestions from the vertical layout stack:
+      (1) CommandBar.View() returns only the single input line + hint.
+      (2) New HasSuggestions() bool and SuggestionsView() string methods on CommandBar.
+      (3) New overlayAbove(base, overlay string) string helper in overlay_suggestions.go
+      replaces panel lines just above the command bar with suggestion content,
+      keeping the total layout height fixed at terminal height.
+      (4) Model.View() calls overlayAbove() after building the normal layout when the
+      command bar has suggestions, via the new CommandBarOverlay interface and
+      commandBarSuggestionsView() helper (which applies the CommandBar theme style).
+    references:
+      - "internal/ui/command_bar.go"
+      - "internal/ui/overlay_suggestions.go"
+      - "internal/ui/model.go"
+    testing: >
+      Updated command_bar_test.go: suggestions verified in SuggestionsView() not View();
+      new HasSuggestions, SuggestionsView, and no-trailing-newline tests.
+      New overlay_suggestions_test.go: table-driven tests for overlayAbove (empty,
+      fits, clamped, line count preserved).
+      New model_test.go tests: stubCommandBarOverlay exercises overlay path in View()
+      and commandBarSuggestionsView(). 100% statement coverage maintained.
