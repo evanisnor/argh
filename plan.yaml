@@ -1565,7 +1565,7 @@ tasks:
 
   - id: 90
     title: "Implement GHCLIDiffFetcher"
-    status: pending
+    status: done
     depends_on: [85]
     description: >
       Implements diff.DiffFetcher. Runs gh pr diff. URL parameter parsed to
