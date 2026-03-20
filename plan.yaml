@@ -1597,7 +1597,7 @@ tasks:
 
   - id: 93
     title: "Wire gh CLI backend in main.go"
-    status: pending
+    status: done
     depends_on: [87, 88, 89, 90, 91, 92]
     description: >
       Update runTUI to branch on token_type. Create ghcli.ExecRunner, verify auth,

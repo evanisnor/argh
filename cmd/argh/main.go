@@ -25,6 +25,7 @@ import (
 	"github.com/evanisnor/argh/internal/config"
 	"github.com/evanisnor/argh/internal/diff"
 	"github.com/evanisnor/argh/internal/eventbus"
+	"github.com/evanisnor/argh/internal/ghcli"
 	"github.com/evanisnor/argh/internal/notify"
 	"github.com/evanisnor/argh/internal/persistence"
 	"github.com/evanisnor/argh/internal/status"
@@ -147,6 +148,7 @@ type tuiDeps struct {
 	saveToken     func(token string) error
 	saveTokenType func(tt config.TokenType) error
 	deleteToken   func() error
+	loadTokenType func() (config.TokenType, error)
 	loadConfig    func() (config.Config, error)
 	openDB        func() (*persistence.DB, error)
 	auditLogPath  func() (string, error)
@@ -165,12 +167,21 @@ var setupRunProgram = func(m tea.Model) (tea.Model, error) {
 	return tea.NewProgram(m, tea.WithAltScreen()).Run()
 }
 
+var setupGHCLIVerify = func(ctx context.Context) (string, error) {
+	v := &ghcli.GHCLIAuthVerifier{Runner: &ghcli.ExecRunner{}}
+	return v.Verify(ctx, "")
+}
+
 // productionDeps returns a tuiDeps wired to real OS resources.
 func productionDeps() tuiDeps {
 	cfg, _ := config.Load(config.OSFilesystem{})
 	browser := &osBrowserOpener{}
 	return tuiDeps{
 		authenticate: func(ctx context.Context) (*api.Credentials, error) {
+			tt, _ := config.LoadTokenType(config.OSFilesystem{})
+			if tt == config.TokenTypeGHCLI {
+				return api.Authenticate(ctx, config.OSFilesystem{}, &ghcli.GHCLIAuthVerifier{Runner: &ghcli.ExecRunner{}})
+			}
 			return api.Authenticate(ctx, config.OSFilesystem{}, &api.GitHubTokenVerifier{})
 		},
 		runSetup: func(ctx context.Context) (ui.SetupResult, error) {
@@ -184,6 +195,7 @@ func productionDeps() tuiDeps {
 				OpenBrowser: browser.Open,
 				ClientID:    cfg.OAuth.ClientID,
 				Scopes:      []string{"repo", "read:org"},
+				GHCLIVerify: setupGHCLIVerify,
 			})
 		},
 		saveToken: func(token string) error {
@@ -194,6 +206,9 @@ func productionDeps() tuiDeps {
 		},
 		deleteToken: func() error {
 			return config.DeleteToken(config.OSFilesystem{})
+		},
+		loadTokenType: func() (config.TokenType, error) {
+			return config.LoadTokenType(config.OSFilesystem{})
 		},
 		loadConfig: func() (config.Config, error) {
 			return config.Load(config.OSFilesystem{})
@@ -317,27 +332,52 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 
 	auditLogger := audit.New(auditPath)
 
-	// ── Rate limit tracker ───────────────────────────────────────────────────
+	// ── Backend selection ────────────────────────────────────────────────────
 
-	rateLimitTracker := api.NewRateLimitTracker(db, bus)
+	tokenType, _ := deps.loadTokenType()
 
-	// ── Authenticated GitHub clients ─────────────────────────────────────────
+	var (
+		myPRsFetcher  api.Fetcher
+		reviewFetcher api.Fetcher
+		rateLimiter   api.RateLimitReader
+		mutator       ui.PRMutator
+		resolver      ui.ThreadResolver
+		actionExec    watches.ActionExecutor
+		diffViewer    *diff.Viewer
+	)
 
-	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: creds.Token})
-	httpClient := oauth2.NewClient(ctx, src)
+	if tokenType == config.TokenTypeGHCLI {
+		runner := &ghcli.ExecRunner{}
+		ghMutator := &ghcli.GHCLIMutator{Runner: runner, Audit: auditLogger}
 
-	// Wrap transport with SSO detection so 403s with X-GitHub-SSO header
-	// surface the authorization URL in the TUI status bar.
-	ssoObserver := api.NewBrowserSSOObserver(bus, execOpen)
-	httpClient.Transport = api.NewSSOTransport(httpClient.Transport, ssoObserver)
+		myPRsFetcher = ghcli.NewGHCLIMyPRsFetcher(runner, db, bus, creds.Login)
+		reviewFetcher = ghcli.NewGHCLIReviewQueueFetcher(runner, db, bus, creds.Login)
+		rateLimiter = &ghcli.FixedRateLimitReader{}
+		mutator = ghMutator
+		resolver = ghMutator
+		actionExec = ghMutator
+		diffViewer = diff.New("", &ghcli.GHCLIDiffFetcher{Runner: runner}, nil, nil)
+	} else {
+		rateLimitTracker := api.NewRateLimitTracker(db, bus)
+		rateLimiter = rateLimitTracker
 
-	gqlClient := githubv4.NewClient(httpClient)
-	restClient := github.NewClient(httpClient)
+		src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: creds.Token})
+		httpClient := oauth2.NewClient(ctx, src)
 
-	// ── Fetchers ─────────────────────────────────────────────────────────────
+		ssoObserver := api.NewBrowserSSOObserver(bus, execOpen)
+		httpClient.Transport = api.NewSSOTransport(httpClient.Transport, ssoObserver)
 
-	myPRsFetcher := api.NewMyPullRequestsFetcher(gqlClient, db, bus, creds.Login)
-	reviewFetcher := api.NewReviewQueueFetcher(gqlClient, db, bus, creds.Login)
+		gqlClient := githubv4.NewClient(httpClient)
+		restClient := github.NewClient(httpClient)
+
+		myPRsFetcher = api.NewMyPullRequestsFetcher(gqlClient, db, bus, creds.Login)
+		reviewFetcher = api.NewReviewQueueFetcher(gqlClient, db, bus, creds.Login)
+		apiMutator := api.NewMutator(restClient.PullRequests, restClient.Issues, gqlClient, auditLogger)
+		mutator = apiMutator
+		resolver = apiMutator
+		actionExec = apiMutator
+		diffViewer = diff.New(creds.Token, diff.NewHTTPFetcher(httpClient), nil, nil)
+	}
 
 	// ── Poller ───────────────────────────────────────────────────────────────
 
@@ -345,17 +385,17 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 	if newTicker == nil {
 		newTicker = api.NewRealTicker
 	}
-	poller := api.NewPoller(myPRsFetcher, reviewFetcher, rateLimitTracker,
-		cfg.PollInterval.Duration, newTicker)
+	pollInterval := cfg.PollInterval.Duration
+	if tokenType == config.TokenTypeGHCLI && pollInterval < 30*time.Second {
+		pollInterval = 30 * time.Second
+	}
+	poller := api.NewPoller(myPRsFetcher, reviewFetcher, rateLimiter,
+		pollInterval, newTicker)
 	if len(cfg.SleepSchedule.Windows) > 0 {
 		sleep := api.NewSleepSchedule(cfg.SleepSchedule.Windows,
 			cfg.SleepSchedule.PollInterval.Duration, api.RealClock{})
 		poller.SetSleepSchedule(sleep)
 	}
-
-	// ── Mutations ────────────────────────────────────────────────────────────
-
-	mutator := api.NewMutator(restClient.PullRequests, restClient.Issues, gqlClient, auditLogger)
 
 	// ── Do Not Disturb ───────────────────────────────────────────────────────
 
@@ -371,14 +411,14 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 	// ── Watches ──────────────────────────────────────────────────────────────
 
 	watchManager := watches.NewManager(db, time.Now, newWatchID)
-	watchEngine := watches.NewEngine(db, db, mutator, sender, bus, auditLogger, time.Now)
+	watchEngine := watches.NewEngine(db, db, actionExec, sender, bus, auditLogger, time.Now)
 
 	// ── UI panels ────────────────────────────────────────────────────────────
 
 	myPRsPanel := ui.NewMyPRsPanel(db)
 	reviewQueuePanel := ui.NewReviewQueuePanel(db, creds.Login)
 	watchesPanel := ui.NewWatchesPanel(db)
-	detailPane := ui.NewDetailPane(mutator)
+	detailPane := ui.NewDetailPane(resolver)
 	commandBar := ui.NewCommandBar()
 
 	// ── Command executor ─────────────────────────────────────────────────────
@@ -388,7 +428,7 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 		Store:     db,
 		Poll:      poller,
 		Browser:   &osBrowserOpener{},
-		Diff:      diff.New(creds.Token, diff.NewHTTPFetcher(httpClient), nil, nil),
+		Diff:      diffViewer,
 		DND:       dnd,
 		Watches:   watchManager,
 		Suggester: &suggest.Suggester{},
