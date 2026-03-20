@@ -44,6 +44,11 @@ func TestGHCLIAuthVerifier_Verify(t *testing.T) {
 			stdout:    "  Logged in to github.com account carol (oauth_token)\n",
 			wantLogin: "carol",
 		},
+		{
+			name:      "multi-host output — picks first account",
+			stdout:    "github.com\n  ✓ Logged in to github.com account alice (keyring)\n  - Active account: true\n\nghe.example.com\n  ✓ Logged in to ghe.example.com account alice-enterprise (keyring)\n  - Active account: true\n",
+			wantLogin: "alice",
+		},
 	}
 
 	for _, tt := range tests {
@@ -71,8 +76,8 @@ func TestGHCLIAuthVerifier_Verify(t *testing.T) {
 
 			// Verify correct args were passed.
 			call := runner.LastCall()
-			if len(call) < 4 || call[0] != "auth" || call[1] != "status" || call[2] != "--hostname" || call[3] != "github.com" {
-				t.Errorf("expected [auth status --hostname github.com], got %v", call)
+			if len(call) != 2 || call[0] != "auth" || call[1] != "status" {
+				t.Errorf("expected [auth status], got %v", call)
 			}
 		})
 	}
@@ -108,6 +113,11 @@ func TestParseGHAuthLogin(t *testing.T) {
 			name:   "account with extra spaces",
 			output: "  account dave (token)\n",
 			want:   "dave",
+		},
+		{
+			name:   "multi-host — picks first account line",
+			output: "github.com\n  ✓ Logged in to github.com account alice (keyring)\n\nghe.example.com\n  ✓ Logged in to ghe.example.com account alice-enterprise (keyring)\n",
+			want:   "alice",
 		},
 	}
 

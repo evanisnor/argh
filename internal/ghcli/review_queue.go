@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/evanisnor/argh/internal/api"
@@ -66,6 +67,8 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 	if err := json.Unmarshal(out, &prs); err != nil {
 		return fmt.Errorf("parsing gh search prs output: %w", err)
 	}
+
+	slog.Debug("ghcli: fetched review queue prs", "count", len(prs))
 
 	for _, p := range prs {
 		repo := p.Repository.NameWithOwner

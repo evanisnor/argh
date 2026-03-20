@@ -3,6 +3,7 @@ package ghcli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -15,7 +16,7 @@ type GHCLIAuthVerifier struct {
 // Verify checks that gh is authenticated and extracts the logged-in username.
 // The token parameter is ignored.
 func (v *GHCLIAuthVerifier) Verify(ctx context.Context, _ string) (string, error) {
-	out, err := v.Runner.Run(ctx, []string{"auth", "status", "--hostname", "github.com"})
+	out, err := v.Runner.Run(ctx, []string{"auth", "status"})
 	if err != nil {
 		return "", fmt.Errorf("gh auth status failed: %w", err)
 	}
@@ -25,6 +26,7 @@ func (v *GHCLIAuthVerifier) Verify(ctx context.Context, _ string) (string, error
 		return "", fmt.Errorf("could not parse username from gh auth status output")
 	}
 
+	slog.Debug("ghcli: authenticated", "login", login)
 	return login, nil
 }
 

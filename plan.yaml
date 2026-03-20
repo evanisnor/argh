@@ -1606,3 +1606,33 @@ tasks:
     testing: >
       Test runTUI with token_type=ghcli using stubbed gh dependencies.
       Test authenticate fallback to gh verifier. Existing API backend tests unchanged.
+
+  # ─── Phase 20: gh CLI Backend Diagnostics ─────────────────────────────────
+
+  - id: 94
+    title: "Add debug logging to ghcli runner and fetchers"
+    status: done
+    depends_on: [93]
+    description: >
+      Add slog.Debug / slog.Error calls throughout the ghcli package so all
+      commands, outputs, and results are visible in the debug log.
+      runner.go: log command args before execution, output byte count on success, full stderr on error.
+      auth.go: log the extracted login.
+      my_prs.go: log PR count after JSON parse.
+      review_queue.go: log PR count after JSON parse.
+    testing: >
+      slog.Debug calls are side-effect-only with no branching, so existing tests
+      already cover these paths. No new test branches needed.
+
+  - id: 95
+    title: "Remove hardcoded --hostname github.com from auth verifier"
+    status: done
+    depends_on: [93]
+    description: >
+      Change auth.go Verify() args from ["auth", "status", "--hostname", "github.com"]
+      to ["auth", "status"]. Running gh auth status without --hostname reports all
+      authenticated hosts. parseGHAuthLogin already handles this generically.
+      Update auth_test.go stub expectations and add test case for multi-host output.
+    testing: >
+      Update stub expectation from [auth status --hostname github.com] to [auth status].
+      Add test case for multi-host output format (two hosts, picks first account line).
