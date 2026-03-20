@@ -1300,7 +1300,7 @@ tasks:
 
   - id: 58
     title: "Remove gh dependency from Brewfile and docs"
-    status: pending
+    status: done
     depends_on: [57]
     description: >
       Remove brew "gh" from Brewfile. Update CLAUDE.md runtime dependencies

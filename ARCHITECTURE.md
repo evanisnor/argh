@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`argh` is a terminal-native pull request dashboard and automation engine for GitHub, built in Go. It wraps the `gh` CLI and GitHub REST/GraphQL APIs to provide a real-time control panel for pull request workflows.
+`argh` is a terminal-native pull request dashboard and automation engine for GitHub, built in Go. It uses the GitHub REST/GraphQL APIs to provide a real-time control panel for pull request workflows.
 
 ## Technology Stack
 
@@ -14,7 +14,7 @@
 | **Components** | [Bubbles](https://github.com/charmbracelet/bubbles) | Input, spinner, list, viewport, paginator |
 | **Markdown** | [Glamour](https://github.com/charmbracelet/glamour) | Render PR descriptions in terminal |
 | **Diff Viewer** | [delta](https://github.com/dandavison/delta) | Beautiful syntax-highlighted diffs |
-| **GitHub API** | Native Go Clients | `shurcooL/githubv4` + `google/go-github`; `gh` CLI used only for auth token |
+| **GitHub API** | Native Go Clients | `shurcooL/githubv4` + `google/go-github`; PAT stored at `~/.config/argh/token` |
 | **Config** | YAML via `gopkg.in/yaml.v3` | Native Go config management; no external dependencies |
 | **Database** | SQLite (`mattn/go-sqlite3`) | Reactive persistent cache, complex queries, robust offline state |
 | **Fuzzy Match** | `go-fuzz` or `fzf-lib` | Command bar autocomplete |
@@ -30,7 +30,7 @@ graph TD
         direction TB
         
         Ticker((Poll Ticker<br>10s default))
-        API[API Client<br>(gh token)]
+        API[API Client<br>(PAT)]
         DB[(Cache / DB<br>Source of Truth)]
         UI[Bubble Tea<br>Model/View]
         Watch[Watch Engine<br>(goroutine)]
@@ -98,14 +98,14 @@ argh/
 -   **GraphQL Search**: Finds PRs across all repositories (`is:pr author:@me` etc).
 -   **GraphQL Query**: Fetches details (reviews, checks) in bulk.
 -   **REST API**: Handles mutations (merge, approve, etc) and specific resource actions.
--   **Authentication**: Uses `gh auth token` to obtain credentials—no separate OAuth flow.
+-   **Authentication**: Uses a GitHub Personal Access Token (PAT) saved at `~/.config/argh/token`. On first launch, a setup modal prompts the user to provide a valid PAT.
 
 ### Polling & Rate Limits
 
 GitHub enforces two independent limit systems that both apply:
 
 #### Primary Rate Limit (per hour)
-- **5,000 points/hour** for authenticated users (personal access token or `gh` auth)
+- **5,000 points/hour** for authenticated users (personal access token)
 - Shared across REST and GraphQL combined
 
 #### Secondary Rate Limits (per minute — the real constraint)
@@ -143,7 +143,7 @@ The secondary limit (2,000 pts/min for GraphQL) caps this at **2,000 polls/minut
 | 30s | 120 | 120 | 2.4% |
 | 60s | 60 | 60 | 1.2% |
 
-**10 seconds** gives near-real-time responsiveness while consuming only ~7% of the hourly budget, leaving ample headroom for user-triggered mutations and any other `gh` usage the user has running. Configurable in `~/.config/argh/config.yaml`.
+**10 seconds** gives near-real-time responsiveness while consuming only ~7% of the hourly budget, leaving ample headroom for user-triggered mutations. Configurable in `~/.config/argh/config.yaml`.
 
 #### Adaptive Back-Off
 argh reads the `x-ratelimit-remaining` and `x-ratelimit-reset` response headers on every request and applies automatic back-off:
@@ -168,8 +168,8 @@ Where using REST endpoints (e.g., PR details, check runs), argh uses `If-None-Ma
 
 **Formula highlights:**
 - Single Go binary, cross-compiled for macOS arm64 and amd64.
-- Declares runtime dependencies on `gh` and `delta`.
-- Post-install message guides user through `gh auth login` if not already authenticated.
+- Declares a runtime dependency on `delta`.
+- Post-install message guides user through first-launch PAT setup.
 
 ### Brewfile
 
@@ -180,7 +180,6 @@ A `Brewfile` in the repo root will pin all required dependencies:
 tap "evanisnor/tap"
 
 # Runtime dependencies
-brew "gh"                           # GitHub CLI — authentication and fallback operations
 brew "dandavison/delta/git-delta"   # Syntax-highlighted diff pager
 
 # The app itself (once formula is published)
@@ -193,10 +192,7 @@ brew "evanisnor/tap/argh"
 # Install dependencies + argh in one step
 brew bundle
 
-# Authenticate with GitHub (one-time)
-gh auth login
-
-# Launch
+# Launch (first run prompts for GitHub PAT)
 argh
 ```
 

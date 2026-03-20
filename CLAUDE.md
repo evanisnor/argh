@@ -26,7 +26,7 @@ Coverage must not drop below 100% branch and line coverage.
 
 ## Runtime Dependencies
 
-`gh` (GitHub CLI, used only for `gh auth token`) and `delta` (diff pager) must be installed. `brew bundle` installs both via the repo `Brewfile`.
+`delta` (diff pager) must be installed. `brew bundle` installs it via the repo `Brewfile`. Authentication uses a GitHub Personal Access Token (PAT) stored at `~/.config/argh/token`; argh prompts for the PAT on first launch via a setup modal.
 
 ## Task Workflow
 
