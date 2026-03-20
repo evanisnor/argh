@@ -208,11 +208,17 @@ func productionDeps() tuiDeps {
 	}
 }
 
+// execOpen is the function used to open a URL via the system browser.
+// It is a variable so tests can replace it without launching Finder.
+var execOpen = func(url string) error {
+	return exec.Command("open", url).Run()
+}
+
 // osBrowserOpener opens a URL using the macOS open(1) command.
 type osBrowserOpener struct{}
 
 func (o *osBrowserOpener) Open(url string) error {
-	return exec.Command("open", url).Run()
+	return execOpen(url)
 }
 
 // newWatchID returns a random 16-hex-character string for use as a watch ID.

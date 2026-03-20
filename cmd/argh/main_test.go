@@ -803,9 +803,14 @@ func TestRunTUI_NilTicker_UsesRealTicker(t *testing.T) {
 // ── osBrowserOpener ───────────────────────────────────────────────────────────
 
 func TestOsBrowserOpener_Open(t *testing.T) {
+	orig := execOpen
+	defer func() { execOpen = orig }()
+	execOpen = func(url string) error { return nil }
+
 	opener := &osBrowserOpener{}
-	// open with an empty argument returns an error; we just need coverage of the line.
-	_ = opener.Open("")
+	if err := opener.Open("https://example.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 // ── productionDeps individual closure coverage ────────────────────────────────
