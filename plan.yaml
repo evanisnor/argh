@@ -1307,3 +1307,114 @@ tasks:
       section. Update ARCHITECTURE.md auth references.
     testing: >
       No unit tests. Verify no references to gh CLI remain in Go source.
+
+  # ─── Phase 16: SSO Support & OAuth Device Flow ─────────────────────────────
+
+  - id: 59
+    title: "Token type metadata in config package"
+    status: done
+    depends_on: [58]
+    description: >
+      Add a token_type file alongside the existing token file in ~/.config/argh/.
+      New TokenType string type with constants TokenTypePAT = "pat" and
+      TokenTypeOAuth = "oauth". LoadTokenType(fs Filesystem) reads
+      ~/.config/argh/token_type; returns TokenTypePAT if file missing.
+      SaveTokenType(fs Filesystem, tt TokenType) writes with 0600 perms.
+    testing: >
+      Table-driven: file present with each value, file missing (defaults to PAT),
+      empty file, round-trip save+load, filesystem errors.
+
+  - id: 60
+    title: "OAuth Device Flow client"
+    status: done
+    depends_on: [58]
+    description: >
+      Implement RFC 8628 device authorization grant for GitHub.
+      DeviceFlowClient interface with RequestCode and PollToken methods.
+      GitHubDeviceFlowClient accepts HTTPDoer interface and BaseURL for testability.
+      Sleeper interface to avoid real time.Sleep in tests.
+    testing: >
+      Table-driven with httptest.NewServer: success, HTTP errors, invalid JSON,
+      poll with pending then success, slow_down increases interval, expired/denied
+      errors, cancelled context.
+
+  - id: 61
+    title: "SSORequired event type"
+    status: done
+    depends_on: [58]
+    description: >
+      Add constant SSORequired EventType = "SSO_REQUIRED" to eventbus/bus.go.
+    testing: >
+      No new tests needed — existing bus tests prove pub/sub works for any EventType.
+
+  - id: 62
+    title: "SSO-aware HTTP round tripper"
+    status: pending
+    depends_on: [61]
+    description: >
+      SSOInfo struct with OrgName and AuthorizationURL. SSOObserver interface
+      with OnSSORequired(info SSOInfo). NewSSOTransport wraps base
+      http.RoundTripper, inspects 403 + X-GitHub-SSO header. BusSSOObserver
+      publishes SSORequired events to bus.
+    testing: >
+      Table-driven: 200 (no call), 403 without header (no call), 403 with valid
+      header (observer called), malformed header (no crash), transport error.
+      BusSSOObserver publishes correct event.
+
+  - id: 63
+    title: "Handle SSORequired event in UI model"
+    status: pending
+    depends_on: [61, 62]
+    description: >
+      Add SSORequired case to handleDBEvent and notifColor in model.go.
+      Status bar shows SSO required message with yellow color.
+    testing: >
+      SSORequired event updates status bar text and color; non-SSOInfo payload
+      is a no-op.
+
+  - id: 64
+    title: "OAuth client ID in config"
+    status: done
+    depends_on: [58]
+    description: >
+      Add OAuthConfig struct with ClientID field to Config. Set default ClientID
+      in defaults(). Users can override in config.yaml for GHE.
+    testing: >
+      Missing oauth section uses default; custom client_id overrides; existing
+      tests unaffected.
+
+  - id: 65
+    title: "Redesign setup modal with auth method selection"
+    status: pending
+    depends_on: [59, 60, 64]
+    description: >
+      Refactor setup.go into multi-screen flow: method selection screen,
+      device flow screen, and existing PAT entry screen. Updated SetupDeps
+      with DeviceFlow, OpenBrowser, ClientID, Scopes. SetupResult struct
+      with Token, TokenType, Quit.
+    testing: >
+      Method selection renders; g transitions to device flow; p transitions to
+      PAT entry; device code/token messages; q/esc/ctrl+c quit from all screens;
+      SetupResult carries correct TokenType.
+
+  - id: 66
+    title: "Device flow test helpers"
+    status: pending
+    depends_on: [60]
+    description: >
+      Add StubDeviceFlowClient to internal/api/testing.go with RequestCodeFunc
+      and PollTokenFunc fields.
+    testing: >
+      No separate tests — used by setup_test.go.
+
+  - id: 67
+    title: "Wire OAuth device flow and SSO transport into main.go"
+    status: pending
+    depends_on: [62, 63, 65, 66]
+    description: >
+      Update tuiDeps runSetup signature to return SetupResult. Add saveTokenType
+      field. Wire GitHubDeviceFlowClient, BusSSOObserver, SSOTransport into
+      productionDeps and runTUI. Save both token and token type after setup.
+    testing: >
+      Update happyDeps with new fields; test OAuth setup path saves token +
+      token type; test SSO transport is wired; all existing tests updated.

@@ -47,12 +47,19 @@ type SleepScheduleConfig struct {
 	Windows      []ScheduleWindow `yaml:"windows"`
 }
 
+// OAuthConfig holds OAuth app configuration. Users can override the default
+// client ID in config.yaml for GitHub Enterprise.
+type OAuthConfig struct {
+	ClientID string `yaml:"client_id"`
+}
+
 // Config is the top-level configuration for argh.
 type Config struct {
 	PollInterval  duration            `yaml:"poll_interval"`
 	Notifications NotificationsConfig `yaml:"notifications"`
 	DoNotDisturb  DoNotDisturbConfig  `yaml:"do_not_disturb"`
 	SleepSchedule SleepScheduleConfig `yaml:"sleep_schedule"`
+	OAuth         OAuthConfig         `yaml:"oauth"`
 }
 
 // duration is a wrapper around time.Duration that supports YAML unmarshaling
@@ -78,6 +85,8 @@ func (d *duration) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+const defaultOAuthClientID = "Ov23liYOUR_CLIENT_ID"
+
 // defaults returns a Config with all default values applied.
 func defaults() Config {
 	return Config{
@@ -93,6 +102,9 @@ func defaults() Config {
 		},
 		SleepSchedule: SleepScheduleConfig{
 			PollInterval: duration{defaultSleepPollInterval},
+		},
+		OAuth: OAuthConfig{
+			ClientID: defaultOAuthClientID,
 		},
 	}
 }
@@ -155,6 +167,9 @@ func Load(fs Filesystem) (Config, error) {
 	}
 	if cfg.SleepSchedule.PollInterval.Duration == 0 {
 		cfg.SleepSchedule.PollInterval = duration{defaultSleepPollInterval}
+	}
+	if cfg.OAuth.ClientID == "" {
+		cfg.OAuth.ClientID = defaultOAuthClientID
 	}
 
 	return cfg, nil

@@ -23,6 +23,9 @@ const (
 
 	// RateLimitWarning fires when the GitHub API rate limit remaining drops below 100.
 	RateLimitWarning EventType = "RATE_LIMIT_WARNING"
+
+	// SSORequired fires when a GitHub API 403 response includes an X-GitHub-SSO header.
+	SSORequired EventType = "SSO_REQUIRED"
 )
 
 // Event carries the type of change plus before/after snapshots of the

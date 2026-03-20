@@ -425,4 +425,34 @@ func TestConfig_Defaults(t *testing.T) {
 	if !cfg.Notifications.Merged {
 		t.Error("Defaults().Notifications.Merged: want true")
 	}
+	if cfg.OAuth.ClientID == "" {
+		t.Error("Defaults().OAuth.ClientID: want non-empty default")
+	}
+}
+
+func TestLoad_OAuthSection_DefaultClientID(t *testing.T) {
+	fs := newFakeFS(t.TempDir())
+	cfg, err := config.Load(fs)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OAuth.ClientID == "" {
+		t.Error("OAuth.ClientID should have a default value when config file is missing")
+	}
+}
+
+func TestLoad_OAuthSection_CustomClientID(t *testing.T) {
+	dir := t.TempDir()
+	fs := newFakeFS(dir)
+	fs.writeConfig(dir, `
+oauth:
+  client_id: "my-custom-client-id"
+`)
+	cfg, err := config.Load(fs)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OAuth.ClientID != "my-custom-client-id" {
+		t.Errorf("OAuth.ClientID: got %q, want %q", cfg.OAuth.ClientID, "my-custom-client-id")
+	}
 }

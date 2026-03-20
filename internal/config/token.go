@@ -12,6 +12,15 @@ import (
 var ErrTokenNotFound = errors.New("token not found")
 
 const tokenFileName = "token"
+const tokenTypeFileName = "token_type"
+
+// TokenType identifies the authentication method used to obtain the token.
+type TokenType string
+
+const (
+	TokenTypePAT   TokenType = "pat"
+	TokenTypeOAuth TokenType = "oauth"
+)
 
 // ConfigDirPath returns the path to the argh config directory
 // (~/.config/argh on macOS).
@@ -72,6 +81,49 @@ func DeleteToken(fs Filesystem) error {
 
 	if err := fs.Remove(filepath.Join(dir, tokenFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("removing token file: %w", err)
+	}
+
+	return nil
+}
+
+// LoadTokenType reads the token type from the token_type file in the config
+// directory. Returns TokenTypePAT if the file does not exist (backward compat).
+func LoadTokenType(fs Filesystem) (TokenType, error) {
+	dir, err := configDirPath(fs)
+	if err != nil {
+		return "", fmt.Errorf("resolving config directory: %w", err)
+	}
+
+	data, err := fs.ReadFile(filepath.Join(dir, tokenTypeFileName))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return TokenTypePAT, nil
+		}
+		return "", fmt.Errorf("reading token_type file: %w", err)
+	}
+
+	val := strings.TrimSpace(string(data))
+	if val == "" {
+		return TokenTypePAT, nil
+	}
+
+	return TokenType(val), nil
+}
+
+// SaveTokenType writes the token type to the token_type file in the config
+// directory, creating the directory if needed. The file is written with mode 0600.
+func SaveTokenType(fs Filesystem, tt TokenType) error {
+	dir, err := configDirPath(fs)
+	if err != nil {
+		return fmt.Errorf("resolving config directory: %w", err)
+	}
+
+	if err := fs.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	if err := fs.WriteFile(filepath.Join(dir, tokenTypeFileName), []byte(string(tt)), 0o600); err != nil {
+		return fmt.Errorf("writing token_type file: %w", err)
 	}
 
 	return nil

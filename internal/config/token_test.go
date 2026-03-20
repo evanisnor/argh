@@ -156,6 +156,138 @@ func TestSaveToken(t *testing.T) {
 	})
 }
 
+func TestLoadTokenType(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(fs *fakeFS)
+		wantType config.TokenType
+		wantErr  bool
+	}{
+		{
+			name: "file present with pat",
+			setup: func(fs *fakeFS) {
+				fs.files[filepath.Join(fs.configDir, "argh", "token_type")] = []byte("pat")
+			},
+			wantType: config.TokenTypePAT,
+		},
+		{
+			name: "file present with oauth",
+			setup: func(fs *fakeFS) {
+				fs.files[filepath.Join(fs.configDir, "argh", "token_type")] = []byte("oauth")
+			},
+			wantType: config.TokenTypeOAuth,
+		},
+		{
+			name:     "file missing defaults to PAT",
+			setup:    func(fs *fakeFS) {},
+			wantType: config.TokenTypePAT,
+		},
+		{
+			name: "empty file defaults to PAT",
+			setup: func(fs *fakeFS) {
+				fs.files[filepath.Join(fs.configDir, "argh", "token_type")] = []byte("  \n")
+			},
+			wantType: config.TokenTypePAT,
+		},
+		{
+			name: "UserConfigDir error",
+			setup: func(fs *fakeFS) {
+				fs.configErr = errors.New("no home dir")
+			},
+			wantErr: true,
+		},
+		{
+			name: "read error non-ErrNotExist",
+			setup: func(fs *fakeFS) {
+				fs.files[filepath.Join(fs.configDir, "argh", "token_type")] = nil
+				fs.readErr = errors.New("permission denied")
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := newFakeFS(t.TempDir())
+			tt.setup(fs)
+
+			got, err := config.LoadTokenType(fs)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadTokenType: unexpected error: %v", err)
+			}
+			if got != tt.wantType {
+				t.Errorf("LoadTokenType: got %q, want %q", got, tt.wantType)
+			}
+		})
+	}
+}
+
+func TestSaveTokenType(t *testing.T) {
+	t.Run("save and re-read", func(t *testing.T) {
+		fs := newFakeFS(t.TempDir())
+		if err := config.SaveTokenType(fs, config.TokenTypeOAuth); err != nil {
+			t.Fatalf("SaveTokenType: %v", err)
+		}
+
+		got, err := config.LoadTokenType(fs)
+		if err != nil {
+			t.Fatalf("LoadTokenType after save: %v", err)
+		}
+		if got != config.TokenTypeOAuth {
+			t.Errorf("LoadTokenType: got %q, want %q", got, config.TokenTypeOAuth)
+		}
+	})
+
+	t.Run("round-trip PAT", func(t *testing.T) {
+		fs := newFakeFS(t.TempDir())
+		if err := config.SaveTokenType(fs, config.TokenTypePAT); err != nil {
+			t.Fatalf("SaveTokenType: %v", err)
+		}
+
+		got, err := config.LoadTokenType(fs)
+		if err != nil {
+			t.Fatalf("LoadTokenType after save: %v", err)
+		}
+		if got != config.TokenTypePAT {
+			t.Errorf("LoadTokenType: got %q, want %q", got, config.TokenTypePAT)
+		}
+	})
+
+	t.Run("MkdirAll error", func(t *testing.T) {
+		fs := newFakeFS(t.TempDir())
+		fs.mkdirErr = errors.New("permission denied")
+		err := config.SaveTokenType(fs, config.TokenTypePAT)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("WriteFile error", func(t *testing.T) {
+		fs := newFakeFS(t.TempDir())
+		fs.writeErr = errors.New("disk full")
+		err := config.SaveTokenType(fs, config.TokenTypePAT)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("UserConfigDir error", func(t *testing.T) {
+		fs := newFakeFS("")
+		fs.configErr = errors.New("no home dir")
+		err := config.SaveTokenType(fs, config.TokenTypePAT)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+}
+
 func TestDeleteToken(t *testing.T) {
 	t.Run("delete existing token", func(t *testing.T) {
 		fs := newFakeFS(t.TempDir())
