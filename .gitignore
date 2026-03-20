@@ -3,3 +3,4 @@
 dist
 /argh
 **/.DS_Store
+coverage.html
