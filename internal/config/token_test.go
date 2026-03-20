@@ -178,6 +178,13 @@ func TestLoadTokenType(t *testing.T) {
 			wantType: config.TokenTypeOAuth,
 		},
 		{
+			name: "file present with ghcli",
+			setup: func(fs *fakeFS) {
+				fs.files[filepath.Join(fs.configDir, "argh", "token_type")] = []byte("ghcli")
+			},
+			wantType: config.TokenTypeGHCLI,
+		},
+		{
 			name:     "file missing defaults to PAT",
 			setup:    func(fs *fakeFS) {},
 			wantType: config.TokenTypePAT,
@@ -242,6 +249,21 @@ func TestSaveTokenType(t *testing.T) {
 		}
 		if got != config.TokenTypeOAuth {
 			t.Errorf("LoadTokenType: got %q, want %q", got, config.TokenTypeOAuth)
+		}
+	})
+
+	t.Run("round-trip GHCLI", func(t *testing.T) {
+		fs := newFakeFS(t.TempDir())
+		if err := config.SaveTokenType(fs, config.TokenTypeGHCLI); err != nil {
+			t.Fatalf("SaveTokenType: %v", err)
+		}
+
+		got, err := config.LoadTokenType(fs)
+		if err != nil {
+			t.Fatalf("LoadTokenType after save: %v", err)
+		}
+		if got != config.TokenTypeGHCLI {
+			t.Errorf("LoadTokenType: got %q, want %q", got, config.TokenTypeGHCLI)
 		}
 	})
 

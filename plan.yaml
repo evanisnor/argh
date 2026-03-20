@@ -1500,7 +1500,7 @@ tasks:
 
   - id: 84
     title: "Add TokenTypeGHCLI constant"
-    status: pending
+    status: done
     depends_on: []
     description: >
       Add TokenTypeGHCLI TokenType = "ghcli" to internal/config/token.go.

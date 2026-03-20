@@ -20,6 +20,7 @@ type TokenType string
 const (
 	TokenTypePAT   TokenType = "pat"
 	TokenTypeOAuth TokenType = "oauth"
+	TokenTypeGHCLI TokenType = "ghcli"
 )
 
 // ConfigDirPath returns the path to the argh config directory
