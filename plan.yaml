@@ -1349,7 +1349,7 @@ tasks:
 
   - id: 62
     title: "SSO-aware HTTP round tripper"
-    status: pending
+    status: done
     depends_on: [61]
     description: >
       SSOInfo struct with OrgName and AuthorizationURL. SSOObserver interface
