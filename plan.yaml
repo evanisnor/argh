@@ -1363,7 +1363,7 @@ tasks:
 
   - id: 63
     title: "Handle SSORequired event in UI model"
-    status: pending
+    status: done
     depends_on: [61, 62]
     description: >
       Add SSORequired case to handleDBEvent and notifColor in model.go.
@@ -1399,7 +1399,7 @@ tasks:
 
   - id: 66
     title: "Device flow test helpers"
-    status: pending
+    status: done
     depends_on: [60]
     description: >
       Add StubDeviceFlowClient to internal/api/testing.go with RequestCodeFunc

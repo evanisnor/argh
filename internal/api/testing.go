@@ -418,3 +418,19 @@ func NewStubFetcher() *StubFetcher {
 func (s *StubFetcher) Fetch(ctx context.Context) error {
 	return s.FetchFunc(ctx)
 }
+
+// ── Device Flow stubs ─────────────────────────────────────────────────────────
+
+// StubDeviceFlowClient is a test double for DeviceFlowClient.
+type StubDeviceFlowClient struct {
+	RequestCodeFunc func(ctx context.Context, clientID string, scopes []string) (*DeviceCodeResponse, error)
+	PollTokenFunc   func(ctx context.Context, clientID string, deviceCode string, interval time.Duration) (*TokenResponse, error)
+}
+
+func (s *StubDeviceFlowClient) RequestCode(ctx context.Context, clientID string, scopes []string) (*DeviceCodeResponse, error) {
+	return s.RequestCodeFunc(ctx, clientID, scopes)
+}
+
+func (s *StubDeviceFlowClient) PollToken(ctx context.Context, clientID string, deviceCode string, interval time.Duration) (*TokenResponse, error) {
+	return s.PollTokenFunc(ctx, clientID, deviceCode, interval)
+}

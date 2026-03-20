@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/evanisnor/argh/internal/api"
 	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
 )
@@ -418,6 +419,52 @@ func TestDBEvent_UpdatesStatusText(t *testing.T) {
 				t.Errorf("statusText %q does not contain %q", m.statusText, tt.wantContain)
 			}
 		})
+	}
+}
+
+// TestDBEvent_SSORequired verifies that an SSORequired event with valid SSOInfo
+// payload updates the status bar text.
+func TestDBEvent_SSORequired(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", true),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+
+	info := api.SSOInfo{OrgName: "acme-corp", AuthorizationURL: "https://github.com/orgs/acme-corp/sso?authorization_id=abc"}
+	m = applyMsg(m, DBEventMsg{Event: eventbus.Event{Type: eventbus.SSORequired, After: info}})
+
+	if !strings.Contains(m.statusText, "SSO required") {
+		t.Errorf("statusText %q does not contain 'SSO required'", m.statusText)
+	}
+	if !strings.Contains(m.statusText, "acme-corp") {
+		t.Errorf("statusText %q does not contain org name", m.statusText)
+	}
+	if !strings.Contains(m.statusText, "https://github.com/orgs/acme-corp/sso") {
+		t.Errorf("statusText %q does not contain authorization URL", m.statusText)
+	}
+	if m.statusEventType != eventbus.SSORequired {
+		t.Errorf("statusEventType = %q, want %q", m.statusEventType, eventbus.SSORequired)
+	}
+}
+
+// TestDBEvent_SSORequired_NonSSOInfoPayload verifies that an SSORequired event
+// with a non-SSOInfo payload is a no-op.
+func TestDBEvent_SSORequired_NonSSOInfoPayload(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", true),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+
+	m = applyMsg(m, DBEventMsg{Event: eventbus.Event{Type: eventbus.SSORequired, After: "not an SSOInfo"}})
+
+	if m.statusText != "" {
+		t.Errorf("statusText = %q, want empty for non-SSOInfo payload", m.statusText)
 	}
 }
 
@@ -1088,6 +1135,7 @@ func TestNotifColor(t *testing.T) {
 		{"Review changed → blue", eventbus.ReviewChanged, "● PR #1 review changed", lipgloss.Color("#42A5F5")},
 		{"Watch fired → green", eventbus.WatchFired, "● Watch fired", lipgloss.Color("#4CAF50")},
 		{"Rate limit warning → yellow", eventbus.RateLimitWarning, "⚠ API rate limit low", lipgloss.Color("#FFC107")},
+		{"SSO required → yellow", eventbus.SSORequired, "SSO required for acme", lipgloss.Color("#FFC107")},
 		{"PR updated → blue", eventbus.PRUpdated, "● PR #1 updated", lipgloss.Color("#42A5F5")},
 		{"Unknown type → blue", "UNKNOWN", "", lipgloss.Color("#42A5F5")},
 	}
@@ -1126,15 +1174,19 @@ func TestContainsAny(t *testing.T) {
 // TestDBEvent_SetsStatusEventType verifies that handleDBEvent stores the event type
 // for use in color coding.
 func TestDBEvent_SetsStatusEventType(t *testing.T) {
-	tests := []eventbus.EventType{
-		eventbus.PRUpdated,
-		eventbus.CIChanged,
-		eventbus.ReviewChanged,
-		eventbus.WatchFired,
-		eventbus.RateLimitWarning,
+	tests := []struct {
+		eventType eventbus.EventType
+		after     any
+	}{
+		{eventbus.PRUpdated, nil},
+		{eventbus.CIChanged, nil},
+		{eventbus.ReviewChanged, nil},
+		{eventbus.WatchFired, nil},
+		{eventbus.RateLimitWarning, nil},
+		{eventbus.SSORequired, api.SSOInfo{OrgName: "org", AuthorizationURL: "https://example.com"}},
 	}
-	for _, et := range tests {
-		t.Run(string(et), func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(string(tt.eventType), func(t *testing.T) {
 			m, _ := newTestModel(
 				newStub("myPRs", true),
 				newStub("reviewQueue", true),
@@ -1142,9 +1194,9 @@ func TestDBEvent_SetsStatusEventType(t *testing.T) {
 				newStub("detail", false),
 				newStub("cmdBar", false),
 			)
-			m = applyMsg(m, DBEventMsg{Event: eventbus.Event{Type: et}})
-			if m.statusEventType != et {
-				t.Errorf("statusEventType = %q, want %q", m.statusEventType, et)
+			m = applyMsg(m, DBEventMsg{Event: eventbus.Event{Type: tt.eventType, After: tt.after}})
+			if m.statusEventType != tt.eventType {
+				t.Errorf("statusEventType = %q, want %q", m.statusEventType, tt.eventType)
 			}
 		})
 	}

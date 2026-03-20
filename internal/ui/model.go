@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/evanisnor/argh/internal/api"
 	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
 )
@@ -404,6 +405,13 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		m.statusText = "⚠ API rate limit low"
 		m.statusEventType = e.Type
 		m.lastEventTime = m.clock.Now()
+
+	case eventbus.SSORequired:
+		if info, ok := e.After.(api.SSOInfo); ok {
+			m.statusText = fmt.Sprintf("SSO required for %s - authorize: %s", info.OrgName, info.AuthorizationURL)
+			m.statusEventType = e.Type
+			m.lastEventTime = m.clock.Now()
+		}
 	}
 
 	// Re-arm the listener so we receive the next event.
@@ -472,6 +480,8 @@ func notifColor(eventType eventbus.EventType, statusText string) lipgloss.Color 
 	case eventbus.WatchFired:
 		return lipgloss.Color("#4CAF50") // green
 	case eventbus.RateLimitWarning:
+		return lipgloss.Color("#FFC107") // yellow
+	case eventbus.SSORequired:
 		return lipgloss.Color("#FFC107") // yellow
 	default:
 		return lipgloss.Color("#42A5F5") // blue
