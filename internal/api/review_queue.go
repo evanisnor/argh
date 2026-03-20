@@ -96,8 +96,8 @@ type reviewQueueQuery struct {
 
 // ── Intermediate types ────────────────────────────────────────────────────────
 
-// commitData is an intermediate representation of a GitHub commit author event.
-type commitData struct {
+// CommitData is an intermediate representation of a GitHub commit author event.
+type CommitData struct {
 	AuthorLogin   string
 	CommittedDate githubv4.DateTime
 }
@@ -138,8 +138,8 @@ func (f *ReviewQueueFetcher) Fetch(ctx context.Context) error {
 				Repo:           repo,
 				Number:         int(p.Number),
 				Title:          string(p.Title),
-				Status:         derivePRStatus(p.MergeQueueEntry != nil, bool(p.IsDraft), reviews),
-				CIState:        deriveCIState(runs),
+				Status:         DerivePRStatus(p.MergeQueueEntry != nil, bool(p.IsDraft), reviews),
+				CIState:        DeriveCIState(runs),
 				Draft:          bool(p.IsDraft),
 				Author:         string(p.Author.Login),
 				CreatedAt:      p.CreatedAt.Time,
@@ -164,10 +164,10 @@ func (f *ReviewQueueFetcher) Fetch(ctx context.Context) error {
 	return nil
 }
 
-func extractRQCommits(conn rqCommitConnection) []commitData {
-	var commits []commitData
+func extractRQCommits(conn rqCommitConnection) []CommitData {
+	var commits []CommitData
 	for _, node := range conn.Nodes {
-		commits = append(commits, commitData{
+		commits = append(commits, CommitData{
 			AuthorLogin:   string(node.Commit.Author.User.Login),
 			CommittedDate: node.Commit.CommittedDate,
 		})
@@ -176,7 +176,7 @@ func extractRQCommits(conn rqCommitConnection) []commitData {
 }
 
 // persistRQPR writes a PR and its associated data to the DB and emits events on changes.
-func (f *ReviewQueueFetcher) persistRQPR(pr persistence.PullRequest, runs []checkRunData, reviews []reviewData, commits []commitData) error {
+func (f *ReviewQueueFetcher) persistRQPR(pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, commits []CommitData) error {
 	existing, err := f.store.GetPullRequest(pr.Repo, pr.Number)
 	isNew := errors.Is(err, sql.ErrNoRows)
 	if err != nil && !isNew {
@@ -238,7 +238,7 @@ func (f *ReviewQueueFetcher) persistRQPR(pr persistence.PullRequest, runs []chec
 			Before: existing,
 			After:  pr,
 		})
-	} else if !prsEqual(existing, pr) {
+	} else if !PRsEqual(existing, pr) {
 		f.bus.Publish(eventbus.Event{
 			Type:   eventbus.PRUpdated,
 			Before: existing,

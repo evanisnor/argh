@@ -145,16 +145,16 @@ type myPRsQuery struct {
 
 // ── Intermediate types ────────────────────────────────────────────────────────
 
-// checkRunData is an intermediate representation of a GitHub check run.
-type checkRunData struct {
+// CheckRunData is an intermediate representation of a GitHub check run.
+type CheckRunData struct {
 	Name       string
 	Status     string
 	Conclusion string
 	URL        string
 }
 
-// reviewData is an intermediate representation of a GitHub review.
-type reviewData struct {
+// ReviewData is an intermediate representation of a GitHub review.
+type ReviewData struct {
 	Login string
 	State string
 }
@@ -194,8 +194,8 @@ func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 				Repo:           repo,
 				Number:         int(p.Number),
 				Title:          string(p.Title),
-				Status:         derivePRStatus(p.MergeQueueEntry != nil, bool(p.IsDraft), reviews),
-				CIState:        deriveCIState(runs),
+				Status:         DerivePRStatus(p.MergeQueueEntry != nil, bool(p.IsDraft), reviews),
+				CIState:        DeriveCIState(runs),
 				Draft:          bool(p.IsDraft),
 				Author:         string(p.Author.Login),
 				CreatedAt:      p.CreatedAt.Time,
@@ -220,11 +220,11 @@ func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 	return nil
 }
 
-func extractCheckRuns(suites prSearchCheckSuiteConnection) []checkRunData {
-	var runs []checkRunData
+func extractCheckRuns(suites prSearchCheckSuiteConnection) []CheckRunData {
+	var runs []CheckRunData
 	for _, suite := range suites.Nodes {
 		for _, run := range suite.CheckRuns.Nodes {
-			runs = append(runs, checkRunData{
+			runs = append(runs, CheckRunData{
 				Name:       string(run.Name),
 				Status:     string(run.Status),
 				Conclusion: string(run.Conclusion),
@@ -235,10 +235,10 @@ func extractCheckRuns(suites prSearchCheckSuiteConnection) []checkRunData {
 	return runs
 }
 
-func extractReviews(conn prSearchReviewConnection) []reviewData {
-	var reviews []reviewData
+func extractReviews(conn prSearchReviewConnection) []ReviewData {
+	var reviews []ReviewData
 	for _, rev := range conn.Nodes {
-		reviews = append(reviews, reviewData{
+		reviews = append(reviews, ReviewData{
 			Login: string(rev.Author.Login),
 			State: string(rev.State),
 		})
@@ -247,7 +247,7 @@ func extractReviews(conn prSearchReviewConnection) []reviewData {
 }
 
 // persistPR writes a PR and its associated data to the DB and emits events on changes.
-func (f *MyPullRequestsFetcher) persistPR(pr persistence.PullRequest, runs []checkRunData, reviews []reviewData) error {
+func (f *MyPullRequestsFetcher) persistPR(pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData) error {
 	existing, err := f.store.GetPullRequest(pr.Repo, pr.Number)
 	isNew := errors.Is(err, sql.ErrNoRows)
 	if err != nil && !isNew {
@@ -296,7 +296,7 @@ func (f *MyPullRequestsFetcher) persistPR(pr persistence.PullRequest, runs []che
 			Before: existing,
 			After:  pr,
 		})
-	} else if !prsEqual(existing, pr) {
+	} else if !PRsEqual(existing, pr) {
 		f.bus.Publish(eventbus.Event{
 			Type:   eventbus.PRUpdated,
 			Before: existing,
@@ -318,9 +318,9 @@ func uriString(u githubv4.URI) string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// deriveCIState computes the overall CI state from a slice of check run data.
+// DeriveCIState computes the overall CI state from a slice of check run data.
 // Returns one of: "none", "running", "failing", "passing".
-func deriveCIState(runs []checkRunData) string {
+func DeriveCIState(runs []CheckRunData) string {
 	if len(runs) == 0 {
 		return "none"
 	}
@@ -338,9 +338,9 @@ func deriveCIState(runs []checkRunData) string {
 	return "passing"
 }
 
-// derivePRStatus computes the PR status label from available signals.
+// DerivePRStatus computes the PR status label from available signals.
 // Returns one of: "merge queued", "draft", "open", "approved", "changes requested".
-func derivePRStatus(inMergeQueue, isDraft bool, reviews []reviewData) string {
+func DerivePRStatus(inMergeQueue, isDraft bool, reviews []ReviewData) string {
 	if inMergeQueue {
 		return "merge queued"
 	}
@@ -366,8 +366,8 @@ func derivePRStatus(inMergeQueue, isDraft bool, reviews []reviewData) string {
 	return "open"
 }
 
-// prsEqual returns true when two PullRequest rows carry identical data.
-func prsEqual(a, b persistence.PullRequest) bool {
+// PRsEqual returns true when two PullRequest rows carry identical data.
+func PRsEqual(a, b persistence.PullRequest) bool {
 	return a.ID == b.ID &&
 		a.Title == b.Title &&
 		a.Status == b.Status &&

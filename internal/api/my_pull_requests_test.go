@@ -454,12 +454,12 @@ func TestMyPullRequestsFetcher_Fetch_CheckRunsAndReviewersStored(t *testing.T) {
 	}
 }
 
-// ── deriveCIState ─────────────────────────────────────────────────────────────
+// ── DeriveCIState ─────────────────────────────────────────────────────────────
 
 func TestDeriveCIState(t *testing.T) {
 	tests := []struct {
 		name string
-		runs []checkRunData
+		runs []CheckRunData
 		want string
 	}{
 		{
@@ -469,12 +469,12 @@ func TestDeriveCIState(t *testing.T) {
 		},
 		{
 			name: "empty runs → none",
-			runs: []checkRunData{},
+			runs: []CheckRunData{},
 			want: "none",
 		},
 		{
 			name: "all COMPLETED SUCCESS → passing",
-			runs: []checkRunData{
+			runs: []CheckRunData{
 				{Status: "COMPLETED", Conclusion: "SUCCESS"},
 				{Status: "COMPLETED", Conclusion: "NEUTRAL"},
 			},
@@ -482,7 +482,7 @@ func TestDeriveCIState(t *testing.T) {
 		},
 		{
 			name: "one IN_PROGRESS → running",
-			runs: []checkRunData{
+			runs: []CheckRunData{
 				{Status: "COMPLETED", Conclusion: "SUCCESS"},
 				{Status: "IN_PROGRESS"},
 			},
@@ -490,37 +490,37 @@ func TestDeriveCIState(t *testing.T) {
 		},
 		{
 			name: "QUEUED → running",
-			runs: []checkRunData{{Status: "QUEUED"}},
+			runs: []CheckRunData{{Status: "QUEUED"}},
 			want: "running",
 		},
 		{
 			name: "COMPLETED FAILURE → failing",
-			runs: []checkRunData{{Status: "COMPLETED", Conclusion: "FAILURE"}},
+			runs: []CheckRunData{{Status: "COMPLETED", Conclusion: "FAILURE"}},
 			want: "failing",
 		},
 		{
 			name: "COMPLETED TIMED_OUT → failing",
-			runs: []checkRunData{{Status: "COMPLETED", Conclusion: "TIMED_OUT"}},
+			runs: []CheckRunData{{Status: "COMPLETED", Conclusion: "TIMED_OUT"}},
 			want: "failing",
 		},
 		{
 			name: "COMPLETED ACTION_REQUIRED → failing",
-			runs: []checkRunData{{Status: "COMPLETED", Conclusion: "ACTION_REQUIRED"}},
+			runs: []CheckRunData{{Status: "COMPLETED", Conclusion: "ACTION_REQUIRED"}},
 			want: "failing",
 		},
 		{
 			name: "COMPLETED STARTUP_FAILURE → failing",
-			runs: []checkRunData{{Status: "COMPLETED", Conclusion: "STARTUP_FAILURE"}},
+			runs: []CheckRunData{{Status: "COMPLETED", Conclusion: "STARTUP_FAILURE"}},
 			want: "failing",
 		},
 		{
 			name: "COMPLETED SKIPPED → passing",
-			runs: []checkRunData{{Status: "COMPLETED", Conclusion: "SKIPPED"}},
+			runs: []CheckRunData{{Status: "COMPLETED", Conclusion: "SKIPPED"}},
 			want: "passing",
 		},
 		{
 			name: "mixed COMPLETED: one fail → failing",
-			runs: []checkRunData{
+			runs: []CheckRunData{
 				{Status: "COMPLETED", Conclusion: "SUCCESS"},
 				{Status: "COMPLETED", Conclusion: "FAILURE"},
 			},
@@ -529,21 +529,21 @@ func TestDeriveCIState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := deriveCIState(tt.runs); got != tt.want {
-				t.Errorf("deriveCIState() = %q, want %q", got, tt.want)
+			if got := DeriveCIState(tt.runs); got != tt.want {
+				t.Errorf("DeriveCIState() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// ── derivePRStatus ────────────────────────────────────────────────────────────
+// ── DerivePRStatus ────────────────────────────────────────────────────────────
 
 func TestDerivePRStatus(t *testing.T) {
 	tests := []struct {
 		name         string
 		inMergeQueue bool
 		isDraft      bool
-		reviews      []reviewData
+		reviews      []ReviewData
 		want         string
 	}{
 		{
@@ -555,7 +555,7 @@ func TestDerivePRStatus(t *testing.T) {
 		{
 			name:         "merge queued takes precedence over reviews",
 			inMergeQueue: true,
-			reviews:      []reviewData{{State: "CHANGES_REQUESTED"}},
+			reviews:      []ReviewData{{State: "CHANGES_REQUESTED"}},
 			want:         "merge queued",
 		},
 		{
@@ -566,12 +566,12 @@ func TestDerivePRStatus(t *testing.T) {
 		{
 			name:    "draft with approved review",
 			isDraft: true,
-			reviews: []reviewData{{State: "APPROVED"}},
+			reviews: []ReviewData{{State: "APPROVED"}},
 			want:    "draft",
 		},
 		{
 			name: "changes requested",
-			reviews: []reviewData{
+			reviews: []ReviewData{
 				{State: "CHANGES_REQUESTED"},
 				{State: "APPROVED"},
 			},
@@ -579,7 +579,7 @@ func TestDerivePRStatus(t *testing.T) {
 		},
 		{
 			name:    "approved",
-			reviews: []reviewData{{State: "APPROVED"}},
+			reviews: []ReviewData{{State: "APPROVED"}},
 			want:    "approved",
 		},
 		{
@@ -589,20 +589,20 @@ func TestDerivePRStatus(t *testing.T) {
 		},
 		{
 			name:    "open — commented only",
-			reviews: []reviewData{{State: "COMMENTED"}},
+			reviews: []ReviewData{{State: "COMMENTED"}},
 			want:    "open",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := derivePRStatus(tt.inMergeQueue, tt.isDraft, tt.reviews); got != tt.want {
-				t.Errorf("derivePRStatus() = %q, want %q", got, tt.want)
+			if got := DerivePRStatus(tt.inMergeQueue, tt.isDraft, tt.reviews); got != tt.want {
+				t.Errorf("DerivePRStatus() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// ── prsEqual ─────────────────────────────────────────────────────────────────
+// ── PRsEqual ─────────────────────────────────────────────────────────────────
 
 func TestPRsEqual(t *testing.T) {
 	base := persistence.PullRequest{
@@ -614,7 +614,7 @@ func TestPRsEqual(t *testing.T) {
 		URL: "https://github.com/r/r/pull/1", GlobalID: "PR_1",
 	}
 
-	if !prsEqual(base, base) {
+	if !PRsEqual(base, base) {
 		t.Error("identical PRs should be equal")
 	}
 
@@ -642,7 +642,7 @@ func TestPRsEqual(t *testing.T) {
 	}
 	for _, d := range diffs {
 		t.Run(d.name, func(t *testing.T) {
-			if prsEqual(base, d.b) {
+			if PRsEqual(base, d.b) {
 				t.Errorf("PRs with different %s should not be equal", d.name)
 			}
 		})

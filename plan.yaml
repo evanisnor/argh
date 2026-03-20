@@ -1471,3 +1471,138 @@ tasks:
     testing: >
       First org call opens browser + publishes; same org twice opens once; different
       orgs open for each; nil OpenBrowser no panic; browser error ignored.
+
+  # ─── Phase 19: gh CLI Backend Support ──────────────────────────────────────
+
+  - id: 82
+    title: "Export intermediate types and derivation helpers"
+    status: done
+    depends_on: []
+    description: >
+      Export the currently-private types and functions that both backends need:
+      checkRunData → CheckRunData, reviewData → ReviewData, commitData → CommitData,
+      derivePRStatus → DerivePRStatus, deriveCIState → DeriveCIState, prsEqual → PRsEqual.
+      Update all internal references.
+    testing: >
+      All existing tests pass unchanged (pure rename).
+
+  - id: 83
+    title: "Extract persist+publish into shared helper functions"
+    status: pending
+    depends_on: [82]
+    description: >
+      Extract persist-and-publish logic into package-level functions:
+      PersistPR(store, bus, pr, runs, reviews) and PersistRQPR(store, bus, pr, runs, reviews, commits).
+      Update both existing fetchers to delegate to these functions.
+    testing: >
+      Move persist-related assertions into persist_test.go. Verify: new PR event,
+      changed PR event, CI changed event, unchanged PR no event, upsert errors.
+
+  - id: 84
+    title: "Add TokenTypeGHCLI constant"
+    status: pending
+    depends_on: []
+    description: >
+      Add TokenTypeGHCLI TokenType = "ghcli" to internal/config/token.go.
+    testing: >
+      Test round-trip: save TokenTypeGHCLI, load it back, verify value.
+
+  - id: 85
+    title: "Create internal/ghcli/runner.go — CommandRunner interface"
+    status: pending
+    depends_on: [84]
+    description: >
+      New package internal/ghcli/. Define CommandRunner interface with Run method.
+      Production ExecRunner uses exec.CommandContext("gh", args...).
+      CheckInstalled verifies gh is in PATH.
+      Create testing.go with StubCommandRunner.
+    testing: >
+      Test StubCommandRunner records calls. Test CheckInstalled with stub lookup.
+
+  - id: 86
+    title: "Implement GHCLIAuthVerifier"
+    status: pending
+    depends_on: [85]
+    description: >
+      Implements api.TokenVerifier. Runs gh auth status --hostname github.com
+      and parses output to extract the logged-in username. Token parameter ignored.
+    testing: >
+      Table-driven with StubCommandRunner: successful auth, not authenticated,
+      gh not found, malformed output.
+
+  - id: 87
+    title: "Implement GHCLIMyPRsFetcher"
+    status: pending
+    depends_on: [83, 85]
+    description: >
+      Implements Fetcher interface. Runs gh search prs for author's open PRs.
+      Parses JSON into CheckRunData/ReviewData, builds persistence.PullRequest
+      rows using DerivePRStatus/DeriveCIState, then calls PersistPR.
+    testing: >
+      Table-driven with stub runner: successful parse, empty result, command error,
+      malformed JSON, persist error propagation, event publishing.
+
+  - id: 88
+    title: "Implement GHCLIReviewQueueFetcher"
+    status: pending
+    depends_on: [83, 85, 87]
+    description: >
+      Implements Fetcher interface. Runs gh search prs for review-requested PRs.
+      Same pattern as Task 87, with additional commit extraction. Calls PersistRQPR.
+    testing: >
+      Same pattern as Task 87 plus commit timeline events.
+
+  - id: 89
+    title: "Implement GHCLIMutator"
+    status: pending
+    depends_on: [85]
+    description: >
+      Implements ui.PRMutator (10 methods), watches.ActionExecutor (5 methods),
+      and ui.ThreadResolver (1 method) through one struct.
+    testing: >
+      Table-driven for each method: success, command error, invalid repo format,
+      audit logging. Test merge method flag mapping.
+
+  - id: 90
+    title: "Implement GHCLIDiffFetcher"
+    status: pending
+    depends_on: [85]
+    description: >
+      Implements diff.DiffFetcher. Runs gh pr diff. URL parameter parsed to
+      extract owner/repo and PR number. Token parameter ignored.
+    testing: >
+      Success returns diff bytes, error propagation, URL parsing.
+
+  - id: 91
+    title: "Implement FixedRateLimitReader"
+    status: pending
+    depends_on: []
+    description: >
+      Implements api.RateLimitReader. CurrentState() always returns full quota
+      (Remaining: 5000, Limit: 5000).
+    testing: >
+      Verify CurrentState() returns full quota.
+
+  - id: 92
+    title: "Add gh CLI option to setup flow"
+    status: pending
+    depends_on: [86, 84]
+    description: >
+      Add a third option [c] Use gh CLI to the method selection screen.
+      New screenGHCLI screen. Verify gh is installed and authenticated.
+      On success set token=ghcli sentinel, tokenType=TokenTypeGHCLI.
+    testing: >
+      Table-driven: select c success, gh not installed, gh not authenticated.
+      Existing tests unchanged.
+
+  - id: 93
+    title: "Wire gh CLI backend in main.go"
+    status: pending
+    depends_on: [87, 88, 89, 90, 91, 92]
+    description: >
+      Update runTUI to branch on token_type. Create ghcli.ExecRunner, verify auth,
+      create ghcli fetchers, mutator, diff fetcher, rate limit reader.
+      Set poll interval to max(cfg.PollInterval, 30s) for search API limits.
+    testing: >
+      Test runTUI with token_type=ghcli using stubbed gh dependencies.
+      Test authenticate fallback to gh verifier. Existing API backend tests unchanged.
