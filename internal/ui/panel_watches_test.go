@@ -444,3 +444,37 @@ func TestNewWatchesPanel(t *testing.T) {
 		t.Error("expected HasContent() == true")
 	}
 }
+
+// ── ResizeMsg ────────────────────────────────────────────────────────────────
+
+// TestWatchesPanel_ResizeMsg verifies that a ResizeMsg updates the panel's
+// allocated width.
+func TestWatchesPanel_ResizeMsg(t *testing.T) {
+	reader := &stubWatchReader{}
+	panel := NewWatchesPanel(reader)
+	sm, _ := panel.Update(ResizeMsg{Width: 100, Height: 20})
+	p := sm.(*WatchesPanel)
+	if p.width != 100 {
+		t.Errorf("width = %d, want 100", p.width)
+	}
+}
+
+// TestWatchesPanel_TriggerTruncation verifies that a very long trigger expression
+// is truncated when a narrow width is set via ResizeMsg.
+func TestWatchesPanel_TriggerTruncation(t *testing.T) {
+	longTrigger := strings.Repeat("z", 200)
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{
+			{ID: "w1", Repo: "repo", PRNumber: 42,
+				TriggerExpr: longTrigger, ActionExpr: "merge", Status: "waiting"},
+		},
+	}
+	panel := NewWatchesPanel(reader)
+	panel.Update(ResizeMsg{Width: 60, Height: 10})
+	view := panel.View()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, longTrigger) {
+			t.Errorf("long trigger not truncated in view line: %q", line)
+		}
+	}
+}

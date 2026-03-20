@@ -980,3 +980,88 @@ tasks:
       - "ARCHITECTURE.md § Distribution & Dependencies — Brewfile"
     testing: >
       No unit tests required. Validated by `brew bundle check`.
+
+  # ─── Phase 9: Full-Screen TUI Layout ─────────────────────────────────────────
+
+  - id: 42
+    title: Add ResizeMsg and handle tea.WindowSizeMsg in root model
+    status: done
+    depends_on: [41]
+    description: >
+      In internal/ui/model.go:
+        - Define ResizeMsg{Width, Height int} message type.
+        - Add width and height int fields to Model.
+        - Handle tea.WindowSizeMsg in Update(): store dims, then propagate
+          ResizeMsg to all sub-models (myPRs, reviewQueue, watches, detailPane,
+          commandBar) with their allocated dimensions (see task 43 for how height
+          is distributed).
+      No visual change yet — dimensions are stored but not yet applied in View().
+    references:
+      - "VISION.md § 4. Wireframe Layout"
+    testing: >
+      Add a test that sends tea.WindowSizeMsg{Width: 120, Height: 40} to the root
+      model and verifies width and height are stored. Verify ResizeMsg is forwarded
+      to sub-models (use a spy SubModel that records received messages). Table-driven
+      across a few width/height values including 0x0 (before first resize).
+
+  - id: 43
+    title: Apply Width and Height constraints in root View()
+    status: done
+    depends_on: [42]
+    description: >
+      In internal/ui/model.go View() and its helpers:
+        - headerView(): apply Width(m.width) to the header lipgloss style so the
+          header spans the full terminal width.
+        - commandBarView(): apply Width(m.width) to the command bar style.
+        - panelView(): apply Width(m.width - 2) (inner, accounting for NormalBorder
+          left+right chars) and Height(panelHeight - 2) (inner) to each panel border
+          style. panelHeight is computed as (availableHeight / numVisiblePanels)
+          where availableHeight = m.height - 1 (header) - 1 (command bar).
+        - Add numVisiblePanels() and panelContentHeight() helpers.
+        - When m.width == 0 (before first WindowSizeMsg) skip Width/Height
+          constraints and fall back to natural sizing.
+    references:
+      - "VISION.md § 4. Wireframe Layout"
+    testing: >
+      Add tests that set width/height on the model (via tea.WindowSizeMsg) then
+      call View() and check that the rendered string contains lines of exactly the
+      expected width. Table-driven across: 0x0 (natural sizing), 80x24, 120x40.
+      Verify each visible panel is height-constrained. Verify header and command
+      bar span full width.
+
+  - id: 44
+    title: Handle ResizeMsg in panels; truncate row content to allocated width
+    status: done
+    depends_on: [42]
+    description: >
+      In internal/ui/panel_prs.go, panel_reviews.go, panel_watches.go:
+        - Add width int field to each panel struct.
+        - Handle ResizeMsg in Update(): store m.Width.
+        - In renderRow(), truncate the title (or full row text) to fit within
+          the allocated width so long titles do not cause row wrapping.
+          Truncated titles get a trailing "…" character.
+        - When width == 0, skip truncation (natural sizing fallback).
+    references:
+      - "VISION.md § 4. Wireframe Layout"
+    testing: >
+      Table-driven tests: send ResizeMsg with various widths (0, 40, 80, 120),
+      then call View() and verify no row in the output exceeds the allocated width.
+      Include cases with very long PR titles and very short widths.
+
+  - id: 45
+    title: Reorder CommandBar.View() so suggestions appear above the input line
+    status: done
+    depends_on: [42]
+    description: >
+      In internal/ui/command_bar.go, change View() so that when the bar is focused
+      and suggestions exist, the suggestion lines are rendered BEFORE the textinput
+      line. Since the command bar is the last rendered element (bottom of screen),
+      this causes suggestions to appear above the input rather than below it
+      (which would push them off the bottom of the terminal).
+      Update the ">" cursor indicator to remain on the focused suggestion line.
+    references:
+      - "VISION.md § 3.5 Command Bar"
+    testing: >
+      Add tests that focus the command bar, set suggestions, and call View(). Verify
+      that suggestion lines appear before the input line in the returned string.
+      Test with 0, 1, and maxSuggestions suggestions. Test unfocused state is unchanged.

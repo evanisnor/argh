@@ -27,6 +27,7 @@ type WatchesPanel struct {
 	rows     []watchRow
 	cursor   int
 	flashing map[string]bool // Watch ID → flash active
+	width    int             // allocated terminal width, 0 = no constraint
 }
 
 // NewWatchesPanel creates a new Watches panel backed by the given reader.
@@ -42,6 +43,8 @@ func NewWatchesPanel(reader WatchReader) *WatchesPanel {
 // Update handles incoming Bubble Tea messages.
 func (p *WatchesPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	switch m := msg.(type) {
+	case ResizeMsg:
+		p.width = m.Width
 	case DBEventMsg:
 		if m.Event.Type == eventbus.WatchFired {
 			if w, ok := m.Event.After.(persistence.Watch); ok {
@@ -125,20 +128,19 @@ func watchStatusDisplay(status string) string {
 }
 
 // renderRow formats a single watch row as a string with appropriate styles.
+// The trigger expression is truncated with a trailing "…" when p.width is set
+// and the full row text would exceed the allocated width.
 func (p *WatchesPanel) renderRow(row watchRow, focused bool) string {
 	id := row.watch.ID
 	if len(id) > 8 {
 		id = id[:8]
 	}
 
-	text := fmt.Sprintf("%s  %s  #%d  %s  %s  %s",
-		id,
-		row.watch.Repo,
-		row.watch.PRNumber,
-		row.watch.TriggerExpr,
-		row.watch.ActionExpr,
-		watchStatusDisplay(row.watch.Status),
-	)
+	prefix := fmt.Sprintf("%s  %s  #%d  ", id, row.watch.Repo, row.watch.PRNumber)
+	suffix := fmt.Sprintf("  %s  %s", row.watch.ActionExpr, watchStatusDisplay(row.watch.Status))
+	trigger := truncateTitle(row.watch.TriggerExpr, p.width, len(prefix)+len(suffix))
+
+	text := prefix + trigger + suffix
 
 	style := lipgloss.NewStyle()
 	if row.watch.Status == "failed" {

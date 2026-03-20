@@ -48,6 +48,7 @@ type MyPRsPanel struct {
 	rows     []prRow
 	cursor   int
 	flashing map[string]bool // PR ID → flash active
+	width    int             // allocated terminal width, 0 = no constraint
 }
 
 // NewMyPRsPanel creates a new My PRs panel backed by the given reader.
@@ -69,6 +70,8 @@ func newMyPRsPanelWithClock(reader PRReader, clock Clock) *MyPRsPanel {
 // Update handles incoming Bubble Tea messages.
 func (p *MyPRsPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	switch m := msg.(type) {
+	case ResizeMsg:
+		p.width = m.Width
 	case DBEventMsg:
 		switch m.Event.Type {
 		case eventbus.PRUpdated, eventbus.CIChanged, eventbus.ReviewChanged:
@@ -169,6 +172,8 @@ func (p *MyPRsPanel) refresh() error {
 }
 
 // renderRow formats a single PR row as a string with appropriate styles.
+// The title is truncated with a trailing "…" when p.width is set and the full
+// row text would exceed the allocated width.
 func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 	sid := row.sessionID
 	if sid == "" {
@@ -185,14 +190,18 @@ func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 		title = "[draft] " + title
 	}
 
-	text := fmt.Sprintf("%s %s %s #%d %s  %s  %s  %s  %d  %s",
-		sid, watchIcon, row.pr.Repo, row.pr.Number, title,
+	// Build the row without the title first so we know the fixed-width parts.
+	prefix := fmt.Sprintf("%s %s %s #%d ", sid, watchIcon, row.pr.Repo, row.pr.Number)
+	suffix := fmt.Sprintf("  %s  %s  %s  %d  %s",
 		prStatusDisplay(row.pr.Status, row.pr.Draft),
 		prCIDisplay(row.pr.CIState),
 		prReviewDisplay(row.approvedCount, row.changesCount),
 		row.commentCount,
 		formatAge(now.Sub(row.pr.LastActivityAt)),
 	)
+	title = truncateTitle(title, p.width, len(prefix)+len(suffix))
+
+	text := prefix + title + suffix
 
 	style := lipgloss.NewStyle()
 	if row.pr.Draft {
@@ -218,6 +227,26 @@ func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 		style = style.Reverse(true)
 	}
 	return style.Render(text)
+}
+
+// truncateTitle truncates s with a trailing "…" if width > 0 and
+// len(prefix)+len(s) would exceed width. Returns s unchanged when width is 0.
+func truncateTitle(s string, width, fixedLen int) string {
+	if width <= 0 {
+		return s
+	}
+	maxTitle := width - fixedLen
+	if maxTitle <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxTitle {
+		return s
+	}
+	if maxTitle <= 1 {
+		return "…"
+	}
+	return string(runes[:maxTitle-1]) + "…"
 }
 
 // prStatusDisplay converts a status string to its display form.

@@ -81,6 +81,15 @@ type SubModel interface {
 	HasContent() bool
 }
 
+// ResizeMsg is sent to every sub-model when the root model receives a
+// tea.WindowSizeMsg. Width and Height are the dimensions allocated to that
+// sub-model (Width is always the full terminal width; Height is the sub-model's
+// share of the available vertical space).
+type ResizeMsg struct {
+	Width  int
+	Height int
+}
+
 // Theme holds the lipgloss styles derived from the terminal background.
 type Theme struct {
 	Dark            bool
@@ -141,6 +150,8 @@ type Model struct {
 	unsubscribe       func()
 	theme             Theme
 	dndToggler        DNDToggler // optional; nil = no DND control
+	width             int        // terminal width, 0 until first tea.WindowSizeMsg
+	height            int        // terminal height, 0 until first tea.WindowSizeMsg
 }
 
 // New creates a root Model and subscribes to the event bus. Call Init() to
@@ -256,6 +267,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusText = ev.Prompt
 		m.statusEventType = eventbus.PRUpdated
 		m.lastEventTime = m.clock.Now()
+		return m, waitForDBEvent(m.eventCh)
+
+	case tea.WindowSizeMsg:
+		m.width = ev.Width
+		m.height = ev.Height
+		m.propagateResize()
 		return m, waitForDBEvent(m.eventCh)
 
 	case ShowHelpMsg:
@@ -532,6 +549,56 @@ func (m Model) dispatchToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 }
 
+// propagateResize sends each sub-model a ResizeMsg with its allocated width and
+// height. Width is always the full terminal width. Height is split evenly among
+// the visible panels (2 panels by default, 3 when watches has content).
+// The detail pane and command bar each receive the full terminal dimensions so
+// they can make their own layout decisions.
+func (m *Model) propagateResize() {
+	n := m.numVisiblePanels()
+	panelH := m.panelContentHeight(n)
+	panelW := m.width
+
+	m.myPRs, _ = m.myPRs.Update(ResizeMsg{Width: panelW, Height: panelH})
+	m.reviewQueue, _ = m.reviewQueue.Update(ResizeMsg{Width: panelW, Height: panelH})
+	m.watches, _ = m.watches.Update(ResizeMsg{Width: panelW, Height: panelH})
+	m.detailPane, _ = m.detailPane.Update(ResizeMsg{Width: m.width, Height: m.height})
+	m.commandBar, _ = m.commandBar.Update(ResizeMsg{Width: m.width, Height: m.height})
+}
+
+// numVisiblePanels returns the count of main panels that will be rendered.
+// The watches panel only renders when it has content; the detail pane is not
+// counted here because it overlaps with panel space.
+func (m Model) numVisiblePanels() int {
+	n := 2 // My PRs + Review Queue always shown
+	if m.watches.HasContent() {
+		n++
+	}
+	return n
+}
+
+// panelContentHeight returns the inner content height (excluding the border
+// top/bottom lines and the title line) allocated to each panel when there are
+// n visible panels. Returns 0 when m.height is not yet known.
+//
+// Budget: m.height - 1 (header) - 1 (command bar) distributed across n panels,
+// each of which has 2 border rows + 1 title row = 3 overhead rows.
+func (m Model) panelContentHeight(n int) int {
+	if m.height == 0 || n == 0 {
+		return 0
+	}
+	const headerLines = 1
+	const cmdBarLines = 1
+	available := m.height - headerLines - cmdBarLines
+	perPanel := available / n
+	const panelOverhead = 3 // top border + title + bottom border
+	inner := perPanel - panelOverhead
+	if inner < 1 {
+		inner = 1
+	}
+	return inner
+}
+
 // View composes the full terminal layout.
 //
 // Layout (top → bottom):
@@ -544,15 +611,22 @@ func (m Model) dispatchToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 //
 // When helpVisible is true the normal layout is dimmed and the help overlay is
 // rendered on top.
+//
+// When m.width and m.height are non-zero (after the first tea.WindowSizeMsg),
+// every element is constrained to fill the full terminal width and panels share
+// the available vertical space evenly.
 func (m Model) View() string {
+	n := m.numVisiblePanels()
+	panelH := m.panelContentHeight(n)
+
 	sections := []string{
 		m.headerView(),
-		m.panelView("MY PULL REQUESTS", m.myPRs, m.focused == PanelMyPRs),
-		m.panelView("REVIEW QUEUE", m.reviewQueue, m.focused == PanelReviewQueue),
+		m.panelView("MY PULL REQUESTS", m.myPRs, m.focused == PanelMyPRs, panelH),
+		m.panelView("REVIEW QUEUE", m.reviewQueue, m.focused == PanelReviewQueue, panelH),
 	}
 
 	if m.watches.HasContent() {
-		sections = append(sections, m.panelView("WATCHES", m.watches, m.focused == PanelWatches))
+		sections = append(sections, m.panelView("WATCHES", m.watches, m.focused == PanelWatches, panelH))
 	}
 
 	if m.detailOpen {
@@ -573,7 +647,7 @@ func (m Model) View() string {
 	return normal
 }
 
-// headerView renders the top status bar.
+// headerView renders the top status bar spanning the full terminal width.
 func (m Model) headerView() string {
 	left := fmt.Sprintf("  argh %s  @%s", m.version, m.username)
 	right := "[?] help"
@@ -588,14 +662,31 @@ func (m Model) headerView() string {
 	if m.dndToggler != nil && m.dndToggler.IsDND() {
 		dnd = "  🔕 DND"
 	}
-	return m.theme.Header.Render(left + status + dnd + "  " + right)
+	style := m.theme.Header
+	if m.width > 0 {
+		style = style.Width(m.width)
+	}
+	return style.Render(left + status + dnd + "  " + right)
 }
 
 // panelView wraps a sub-model's View() in a titled border.
-func (m Model) panelView(title string, sub SubModel, focused bool) string {
+// contentHeight is the inner content height (rows of body text plus title line,
+// excluding border rows). When contentHeight is 0 no height constraint is
+// applied and the panel renders at natural height.
+func (m Model) panelView(title string, sub SubModel, focused bool, contentHeight int) string {
 	border := m.theme.UnfocusedBorder
 	if focused {
 		border = m.theme.FocusedBorder
+	}
+	if m.width > 0 {
+		// Width sets the inner (content) width; NormalBorder adds 1 char on each
+		// side, so the total outer width equals m.width.
+		border = border.Width(m.width - 2)
+	}
+	if contentHeight > 0 {
+		// Height sets the inner height. NormalBorder adds 1 line top and 1 line
+		// bottom. +1 accounts for the title line inside the panel.
+		border = border.Height(contentHeight + 1)
 	}
 	body := sub.View()
 	return border.Render(m.theme.PanelTitle.Render(title) + "\n" + body)
@@ -603,12 +694,21 @@ func (m Model) panelView(title string, sub SubModel, focused bool) string {
 
 // detailPaneView renders the collapsible detail pane.
 func (m Model) detailPaneView() string {
-	return m.theme.PanelBorder.Render(
+	style := m.theme.PanelBorder
+	if m.width > 0 {
+		style = style.Width(m.width - 2)
+	}
+	return style.Render(
 		m.theme.PanelTitle.Render("DETAIL") + "\n" + m.detailPane.View(),
 	)
 }
 
-// commandBarView renders the command bar pinned to the bottom.
+// commandBarView renders the command bar pinned to the bottom spanning the full
+// terminal width.
 func (m Model) commandBarView() string {
-	return m.theme.CommandBar.Render("> " + m.commandBar.View())
+	style := m.theme.CommandBar
+	if m.width > 0 {
+		style = style.Width(m.width)
+	}
+	return style.Render("> " + m.commandBar.View())
 }

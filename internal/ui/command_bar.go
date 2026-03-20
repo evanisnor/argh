@@ -440,22 +440,18 @@ func fuzzyFilterStrings(pattern string, items []string) []string {
 	return out
 }
 
-// View renders the command bar. When focused it shows the textinput, current
-// hint, and up to maxSuggestions suggestions.
+// View renders the command bar. When focused it shows up to maxSuggestions
+// suggestions above the textinput line, followed by the current hint.
+// Rendering suggestions before the input means they appear above the bar when
+// it is anchored at the bottom of the terminal.
 func (c *CommandBar) View() string {
 	if !c.focused {
 		return "/ or : for commands"
 	}
 
 	var sb strings.Builder
-	sb.WriteString(c.input.View())
-	if c.hint != "" {
-		sb.WriteString("  ")
-		sb.WriteString(c.hint)
-	}
 
 	if len(c.suggestions) > 0 {
-		sb.WriteString("\n")
 		limit := len(c.suggestions)
 		if limit > maxSuggestions {
 			limit = maxSuggestions
@@ -467,10 +463,15 @@ func (c *CommandBar) View() string {
 				sb.WriteString("  ")
 			}
 			sb.WriteString(c.suggestions[i])
-			if i < limit-1 {
-				sb.WriteString("\n")
-			}
+			sb.WriteString("\n")
 		}
 	}
+
+	sb.WriteString(c.input.View())
+	if c.hint != "" {
+		sb.WriteString("  ")
+		sb.WriteString(c.hint)
+	}
+
 	return sb.String()
 }

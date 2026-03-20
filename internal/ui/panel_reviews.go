@@ -39,6 +39,7 @@ type ReviewQueuePanel struct {
 	rows     []reviewRow
 	cursor   int
 	flashing map[string]bool
+	width    int // allocated terminal width, 0 = no constraint
 }
 
 // NewReviewQueuePanel creates a new Review Queue panel backed by the given reader.
@@ -61,6 +62,8 @@ func newReviewQueuePanelWithClock(reader ReviewReader, username string, clock Cl
 // Update handles incoming Bubble Tea messages.
 func (p *ReviewQueuePanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	switch m := msg.(type) {
+	case ResizeMsg:
+		p.width = m.Width
 	case DBEventMsg:
 		switch m.Event.Type {
 		case eventbus.PRUpdated, eventbus.CIChanged, eventbus.ReviewChanged:
@@ -233,6 +236,8 @@ func urgencyDisplay(score int) string {
 }
 
 // renderRow formats a single review queue row as a string with appropriate styles.
+// The title is truncated with a trailing "…" when p.width is set and the full
+// row text would exceed the allocated width.
 func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool) string {
 	sid := row.sessionID
 	if sid == "" {
@@ -244,13 +249,16 @@ func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool)
 		watchIcon = "👁"
 	}
 
-	text := fmt.Sprintf("%s %s %s #%d %s  @%s  %s  %s  %s",
-		sid, watchIcon, row.pr.Repo, row.pr.Number, row.pr.Title,
+	prefix := fmt.Sprintf("%s %s %s #%d ", sid, watchIcon, row.pr.Repo, row.pr.Number)
+	suffix := fmt.Sprintf("  @%s  %s  %s  %s",
 		row.pr.Author,
 		prCIDisplay(row.pr.CIState),
 		formatAge(now.Sub(row.pr.LastActivityAt)),
 		urgencyDisplay(row.urgency),
 	)
+	title := truncateTitle(row.pr.Title, p.width, len(prefix)+len(suffix))
+
+	text := prefix + title + suffix
 
 	style := lipgloss.NewStyle()
 	if row.isLastReviewer {

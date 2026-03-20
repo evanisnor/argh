@@ -697,3 +697,37 @@ func TestReviewQueuePanel_UrgencySymbolsInView(t *testing.T) {
 		})
 	}
 }
+
+// ── ResizeMsg ────────────────────────────────────────────────────────────────
+
+// TestReviewQueuePanel_ResizeMsg verifies that a ResizeMsg updates the panel's
+// allocated width.
+func TestReviewQueuePanel_ResizeMsg(t *testing.T) {
+	reader := newStubPRReader()
+	panel := makeReviewPanel(reader, "me")
+	sm, _ := panel.Update(ResizeMsg{Width: 80, Height: 15})
+	p := sm.(*ReviewQueuePanel)
+	if p.width != 80 {
+		t.Errorf("width = %d, want 80", p.width)
+	}
+}
+
+// TestReviewQueuePanel_TitleTruncation verifies that very long titles are
+// truncated when a narrow width is set via ResizeMsg.
+func TestReviewQueuePanel_TitleTruncation(t *testing.T) {
+	reader := newStubPRReader()
+	longTitle := strings.Repeat("y", 200)
+	reader.prs = []persistence.PullRequest{
+		{ID: "p1", Repo: "r", Number: 1, Title: longTitle, URL: "u1",
+			Author: "alice", LastActivityAt: t0, CreatedAt: t0},
+	}
+	reader.sessionIDs["u1"] = "a"
+	panel := makeReviewPanel(reader, "me")
+	panel.Update(ResizeMsg{Width: 60, Height: 10})
+	view := panel.View()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, longTitle) {
+			t.Errorf("long title not truncated in view line: %q", line)
+		}
+	}
+}

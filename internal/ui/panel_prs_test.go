@@ -769,3 +769,66 @@ func TestMyPRsPanel_FlashRendering(t *testing.T) {
 		t.Errorf("expected 'flash render' in view after flash; got:\n%s", view)
 	}
 }
+
+// ── ResizeMsg / truncateTitle ─────────────────────────────────────────────────
+
+// TestMyPRsPanel_ResizeMsg verifies that a ResizeMsg updates the panel's width.
+func TestMyPRsPanel_ResizeMsg(t *testing.T) {
+	reader := newStubPRReader()
+	panel := makePanel(reader)
+	sm, _ := panel.Update(ResizeMsg{Width: 120, Height: 20})
+	p := sm.(*MyPRsPanel)
+	if p.width != 120 {
+		t.Errorf("width = %d, want 120", p.width)
+	}
+}
+
+// TestTruncateTitle covers the full branch matrix of truncateTitle.
+func TestTruncateTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		width    int
+		fixedLen int
+		want     string
+	}{
+		{"zero width passthrough", "hello world", 0, 0, "hello world"},
+		{"fits exactly", "hello", 10, 5, "hello"},
+		{"fits with room", "hi", 20, 5, "hi"},
+		{"truncated normal", "hello world extra", 15, 3, "hello world…"},
+		{"maxTitle exactly 1", "hi", 6, 5, "…"},
+		{"maxTitle zero", "hi", 5, 5, ""},
+		{"negative maxTitle", "hi", 3, 5, ""},
+		{"unicode title", "αβγδεζηθι", 12, 4, "αβγδεζη…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateTitle(tt.s, tt.width, tt.fixedLen)
+			if got != tt.want {
+				t.Errorf("truncateTitle(%q, %d, %d) = %q, want %q",
+					tt.s, tt.width, tt.fixedLen, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMyPRsPanel_TitleTruncation verifies that very long titles are truncated
+// in the rendered row when a narrow width is set via ResizeMsg.
+func TestMyPRsPanel_TitleTruncation(t *testing.T) {
+	reader := newStubPRReader()
+	longTitle := strings.Repeat("x", 200)
+	reader.prs = []persistence.PullRequest{
+		{ID: "p1", Repo: "r", Number: 1, Title: longTitle, URL: "u1", LastActivityAt: t0},
+	}
+	reader.sessionIDs["u1"] = "a"
+	panel := makePanel(reader)
+	panel.Update(ResizeMsg{Width: 60, Height: 10})
+	view := panel.View()
+	for _, line := range strings.Split(view, "\n") {
+		// A raw rune-length check is imperfect against styled strings, but the
+		// title should not appear in full in any single line.
+		if strings.Contains(line, longTitle) {
+			t.Errorf("long title not truncated in view line: %q", line)
+		}
+	}
+}
