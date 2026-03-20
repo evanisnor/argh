@@ -1251,7 +1251,7 @@ tasks:
 
   - id: 54
     title: "Add TokenVerifier and rewrite Authenticate"
-    status: pending
+    status: done
     depends_on: [53]
     description: >
       Full rewrite of internal/api/auth.go. Remove CommandExecutor interface.
@@ -1265,7 +1265,7 @@ tasks:
 
   - id: 55
     title: "Delete CommandExecutor / OSCommandExecutor"
-    status: pending
+    status: done
     depends_on: [54]
     description: >
       Delete internal/api/executor.go and internal/api/executor_test.go.

@@ -153,7 +153,7 @@ type tuiDeps struct {
 func productionDeps() tuiDeps {
 	return tuiDeps{
 		authenticate: func(ctx context.Context) (*api.Credentials, error) {
-			return api.Authenticate(ctx, &api.OSCommandExecutor{})
+			return api.Authenticate(ctx, config.OSFilesystem{}, &api.GitHubTokenVerifier{})
 		},
 		loadConfig: func() (config.Config, error) {
 			return config.Load(config.OSFilesystem{})
