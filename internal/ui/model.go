@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -170,6 +171,7 @@ type Model struct {
 	commandBar        SubModel
 	detailOpen        bool
 	helpVisible       bool
+	helpViewport      viewport.Model
 	commandBarFocused bool
 	statusText        string
 	statusEventType   eventbus.EventType
@@ -199,21 +201,26 @@ func New(version, username string, sub Subscriber,
 		}
 	})
 
+	t := newTheme(lipgloss.HasDarkBackground())
+	vp := viewport.New(80, 20)
+	vp.SetContent(renderHelpContent(t))
+
 	return Model{
-		version:     version,
-		username:    username,
-		focused:     PanelMyPRs,
-		myPRs:       myPRs,
-		reviewQueue: reviewQueue,
-		watches:     watches,
-		detailPane:  detailPane,
-		commandBar:  commandBar,
-		detailOpen:  false,
-		statusText:  "",
-		clock:       realClock{},
-		eventCh:     ch,
-		unsubscribe: unsubscribe,
-		theme:       newTheme(lipgloss.HasDarkBackground()),
+		version:      version,
+		username:     username,
+		focused:      PanelMyPRs,
+		myPRs:        myPRs,
+		reviewQueue:  reviewQueue,
+		watches:      watches,
+		detailPane:   detailPane,
+		commandBar:   commandBar,
+		detailOpen:   false,
+		helpViewport: vp,
+		statusText:   "",
+		clock:        realClock{},
+		eventCh:      ch,
+		unsubscribe:  unsubscribe,
+		theme:        t,
 	}
 }
 
@@ -231,21 +238,25 @@ func NewWithTheme(version, username string, sub Subscriber,
 		}
 	})
 
+	vp2 := viewport.New(80, 20)
+	vp2.SetContent(renderHelpContent(theme))
+
 	return Model{
-		version:     version,
-		username:    username,
-		focused:     PanelMyPRs,
-		myPRs:       myPRs,
-		reviewQueue: reviewQueue,
-		watches:     watches,
-		detailPane:  detailPane,
-		commandBar:  commandBar,
-		detailOpen:  false,
-		statusText:  "",
-		clock:       clock,
-		eventCh:     ch,
-		unsubscribe: unsubscribe,
-		theme:       theme,
+		version:      version,
+		username:     username,
+		focused:      PanelMyPRs,
+		myPRs:        myPRs,
+		reviewQueue:  reviewQueue,
+		watches:      watches,
+		detailPane:   detailPane,
+		commandBar:   commandBar,
+		detailOpen:   false,
+		helpViewport: vp2,
+		statusText:   "",
+		clock:        clock,
+		eventCh:      ch,
+		unsubscribe:  unsubscribe,
+		theme:        theme,
 	}
 }
 
@@ -310,11 +321,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = ev.Width
 		m.height = ev.Height
+		vpW, vpH := helpViewportSize(m.width, m.height)
+		m.helpViewport.Width = vpW
+		m.helpViewport.Height = vpH
+		m.helpViewport.SetContent(renderHelpContent(m.theme))
 		m.propagateResize()
 		return m, waitForDBEvent(m.eventCh)
 
 	case ShowHelpMsg:
 		m.helpVisible = true
+		m.helpViewport.GotoTop()
 		return m, waitForDBEvent(m.eventCh)
 
 	case ToggleDNDMsg:
@@ -480,6 +496,20 @@ func containsAny(s string, subs ...string) bool {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	slog.Debug("model.handleKey", "key", msg.String(), "commandBarFocused", m.commandBarFocused)
 
+	// When the help overlay is visible, scroll keys are routed to the
+	// viewport; ? and Esc dismiss the overlay; all other keys are swallowed.
+	if m.helpVisible {
+		switch msg.String() {
+		case "?", "esc":
+			m.helpVisible = false
+		case "j", "down", "pgdown":
+			m.helpViewport, _ = m.helpViewport.Update(msg)
+		case "k", "up", "pgup":
+			m.helpViewport, _ = m.helpViewport.Update(msg)
+		}
+		return m, waitForDBEvent(m.eventCh)
+	}
+
 	// When the command bar is focused, every keystroke goes directly to it
 	// so the textinput receives every character. Only ctrl+c (quit) and esc
 	// (blur) are kept as root-model concerns.
@@ -543,9 +573,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 
 	case "esc":
-		if m.helpVisible {
-			m.helpVisible = false
-		} else if m.commandBarFocused {
+		if m.commandBarFocused {
 			m.commandBarFocused = false
 			var cmd tea.Cmd
 			m.commandBar, cmd = m.commandBar.Update(BlurCommandBarMsg{})
@@ -569,7 +597,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.dispatchToFocused(RequestReviewMsg{})
 
 	case "?":
-		m.helpVisible = !m.helpVisible
+		m.helpVisible = true
+		m.helpViewport.GotoTop()
 
 	case "R":
 		return m, tea.Batch(
@@ -770,10 +799,7 @@ func (m Model) View() string {
 	}
 
 	if m.helpVisible {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			dimBackground(normal),
-			renderHelpOverlay(m.theme),
-		)
+		return overlayModal(normal, m.helpModalView(), m.width, m.height)
 	}
 
 	return normal
@@ -841,6 +867,53 @@ func (m Model) detailPaneView() string {
 		style = style.Width(modalW - 2).Height(modalH - 3)
 	}
 	return style.Render(m.theme.PanelTitle.Render("DETAIL") + "\n" + m.detailPane.View())
+}
+
+// helpModalView renders the help overlay as a centered floating modal. The box
+// uses a rounded border and contains the scrollable viewport.
+func (m Model) helpModalView() string {
+	borderColor := lipgloss.Color("#7C7CF8")
+	if !m.theme.Dark {
+		borderColor = lipgloss.Color("#3030AA")
+	}
+	w, h := helpViewportSize(m.width, m.height)
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1)
+	if w > 0 && h > 0 {
+		style = style.Width(w).Height(h)
+	}
+	scrollPct := m.helpViewport.ScrollPercent()
+	footer := lipgloss.NewStyle().Faint(true).Render(
+		"  j/k scroll · ? or Esc dismiss" +
+			func() string {
+				if scrollPct < 1.0 {
+					return " · ↓ more"
+				}
+				return ""
+			}(),
+	)
+	return style.Render(m.helpViewport.View() + "\n" + footer)
+}
+
+// helpViewportSize returns the inner content dimensions for the help viewport
+// given terminal width and height. Returns 0,0 when dimensions are unknown.
+func helpViewportSize(termWidth, termHeight int) (int, int) {
+	if termWidth == 0 || termHeight == 0 {
+		return 0, 0
+	}
+	// Modal occupies 75% of the terminal; borders + padding subtract ~4 chars
+	// wide and ~4 lines tall from the available space.
+	w := termWidth*3/4 - 4
+	h := termHeight*3/4 - 4
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	return w, h
 }
 
 // commandBarView renders the command bar pinned to the bottom spanning the full

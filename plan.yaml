@@ -1174,3 +1174,35 @@ tasks:
       j/k while closed does not; j with nil SelectedPR does not send msg;
       j on Watches panel (no PRSelector) does not send msg; WithDetailReader
       field test. 100% coverage maintained.
+
+  - id: 50
+    title: "Help overlay: scrollable centered modal"
+    status: done
+    description: >
+      The help overlay is currently rendered by appending its content below the
+      dimmed normal view (JoinVertical), with no fixed dimensions or scrolling.
+      This causes it to render off-screen on typical terminals.
+
+      Changes:
+        - overlay_help.go: rename renderHelpOverlay(theme) →
+          renderHelpContent(theme) (returns raw scrollable text, no border).
+          Add helpModalView(vp viewport.Model, theme Theme, width, height int)
+          that wraps vp.View() in a rounded border constrained to the supplied
+          dimensions (same style as the detail modal).
+        - model.go: add helpViewport viewport.Model field. In New(), initialise
+          it with viewport.New(80, 20). In the WindowSizeMsg handler, resize
+          the viewport to (width*3/4 - 4, height*3/4 - 4) and call
+          SetContent(renderHelpContent(m.theme)). In handleKey, when
+          helpVisible is true, route j/↓/k/↑/pgdown/pgup to
+          m.helpViewport.Update(msg) and return early; keep ? and Esc to
+          dismiss. In View(), replace JoinVertical(dimBackground, overlay)
+          with overlayModal(normal, helpModalView(...), m.width, m.height).
+    references:
+      - "internal/ui/overlay_help.go"
+      - "internal/ui/model.go"
+    testing: >
+      Update TestRenderHelpOverlay_* to call renamed renderHelpContent.
+      Add tests: j scrolls viewport down; k scrolls up; pgdown pages down;
+      modal dimensions respect terminal size; overlay uses overlayModal
+      (content appears centred, not below normal layout). Retain all existing
+      content-assertion tests. 100% coverage maintained.

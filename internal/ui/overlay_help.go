@@ -91,10 +91,10 @@ var helpSections = []helpSection{
 	},
 }
 
-// renderHelpOverlay renders the full help overlay as a styled string.
-// When helpVisible is true, Model.View() calls this and layers it over the
-// dimmed normal layout.
-func renderHelpOverlay(theme Theme) string {
+// renderHelpContent builds the scrollable help text for the help overlay
+// viewport. It returns a plain formatted string with all sections and rows;
+// the caller is responsible for placing it inside a sized viewport and modal.
+func renderHelpContent(theme Theme) string {
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C0C0FF"))
 	if !theme.Dark {
 		keyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#3030AA"))
@@ -133,18 +133,7 @@ func renderHelpOverlay(theme Theme) string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(lipgloss.NewStyle().Faint(true).Render("  Press ? or Esc to dismiss"))
-	sb.WriteString("\n")
-
-	overlayStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#7C7CF8")).
-		Padding(1, 2)
-	if !theme.Dark {
-		overlayStyle = overlayStyle.BorderForeground(lipgloss.Color("#3030AA"))
-	}
-
-	return overlayStyle.Render(sb.String())
+	return sb.String()
 }
 
 // dimBackground applies a faint/dim style to the normal layout string so it

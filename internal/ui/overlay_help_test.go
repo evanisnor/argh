@@ -112,12 +112,7 @@ func TestShowHelpMsg_OverlayVisibleInView(t *testing.T) {
 // TestOverlayContent_ContainsKeyboardShortcuts verifies the overlay includes
 // all documented keyboard shortcuts.
 func TestOverlayContent_ContainsKeyboardShortcuts(t *testing.T) {
-	m, _ := newTestModel(
-		newStub("myPRs", true), newStub("reviewQueue", true),
-		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
-	)
-	m.helpVisible = true
-	view := m.View()
+	content := renderHelpContent(plainTheme())
 
 	shortcuts := []string{
 		"Tab",
@@ -125,8 +120,8 @@ func TestOverlayContent_ContainsKeyboardShortcuts(t *testing.T) {
 		"Esc",
 	}
 	for _, s := range shortcuts {
-		if !strings.Contains(view, s) {
-			t.Errorf("overlay missing keyboard shortcut %q; got:\n%s", s, view)
+		if !strings.Contains(content, s) {
+			t.Errorf("overlay missing keyboard shortcut %q; got:\n%s", s, content)
 		}
 	}
 }
@@ -134,12 +129,7 @@ func TestOverlayContent_ContainsKeyboardShortcuts(t *testing.T) {
 // TestOverlayContent_ContainsCommands verifies the overlay includes all
 // interactive commands.
 func TestOverlayContent_ContainsCommands(t *testing.T) {
-	m, _ := newTestModel(
-		newStub("myPRs", true), newStub("reviewQueue", true),
-		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
-	)
-	m.helpVisible = true
-	view := m.View()
+	content := renderHelpContent(plainTheme())
 
 	commands := []string{
 		":open",
@@ -162,8 +152,8 @@ func TestOverlayContent_ContainsCommands(t *testing.T) {
 		":quit",
 	}
 	for _, cmd := range commands {
-		if !strings.Contains(view, cmd) {
-			t.Errorf("overlay missing command %q; got:\n%s", cmd, view)
+		if !strings.Contains(content, cmd) {
+			t.Errorf("overlay missing command %q; got:\n%s", cmd, content)
 		}
 	}
 }
@@ -171,51 +161,46 @@ func TestOverlayContent_ContainsCommands(t *testing.T) {
 // TestOverlayContent_ContainsWatchSyntax verifies the overlay includes watch
 // trigger and action syntax examples.
 func TestOverlayContent_ContainsWatchSyntax(t *testing.T) {
-	m, _ := newTestModel(
-		newStub("myPRs", true), newStub("reviewQueue", true),
-		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
-	)
-	m.helpVisible = true
-	view := m.View()
+	content := renderHelpContent(plainTheme())
 
-	if !strings.Contains(view, "Watch Trigger") {
-		t.Errorf("overlay missing 'Watch Trigger' section; got:\n%s", view)
+	if !strings.Contains(content, "Watch Trigger") {
+		t.Errorf("overlay missing 'Watch Trigger' section; got:\n%s", content)
 	}
-	if !strings.Contains(view, "Watch Action") {
-		t.Errorf("overlay missing 'Watch Action' section; got:\n%s", view)
+	if !strings.Contains(content, "Watch Action") {
+		t.Errorf("overlay missing 'Watch Action' section; got:\n%s", content)
 	}
 	// Check a few trigger atoms.
 	for _, trigger := range []string{"ci-pass", "approved", "stale"} {
-		if !strings.Contains(view, trigger) {
-			t.Errorf("overlay missing trigger atom %q; got:\n%s", trigger, view)
+		if !strings.Contains(content, trigger) {
+			t.Errorf("overlay missing trigger atom %q; got:\n%s", trigger, content)
 		}
 	}
 }
 
-// TestRenderHelpOverlay_DarkTheme verifies renderHelpOverlay returns non-empty
+// TestRenderHelpContent_DarkTheme verifies renderHelpContent returns non-empty
 // output for a dark theme.
-func TestRenderHelpOverlay_DarkTheme(t *testing.T) {
+func TestRenderHelpContent_DarkTheme(t *testing.T) {
 	theme := plainTheme()
 	theme.Dark = true
 
-	out := renderHelpOverlay(theme)
+	out := renderHelpContent(theme)
 	if out == "" {
-		t.Error("renderHelpOverlay should return non-empty output for dark theme")
+		t.Error("renderHelpContent should return non-empty output for dark theme")
 	}
 	if !strings.Contains(out, "keyboard reference") {
-		t.Errorf("renderHelpOverlay output missing expected content; got:\n%s", out)
+		t.Errorf("renderHelpContent output missing expected content; got:\n%s", out)
 	}
 }
 
-// TestRenderHelpOverlay_LightTheme verifies renderHelpOverlay returns non-empty
+// TestRenderHelpContent_LightTheme verifies renderHelpContent returns non-empty
 // output for a light theme.
-func TestRenderHelpOverlay_LightTheme(t *testing.T) {
+func TestRenderHelpContent_LightTheme(t *testing.T) {
 	theme := plainTheme()
 	theme.Dark = false
 
-	out := renderHelpOverlay(theme)
+	out := renderHelpContent(theme)
 	if out == "" {
-		t.Error("renderHelpOverlay should return non-empty output for light theme")
+		t.Error("renderHelpContent should return non-empty output for light theme")
 	}
 }
 
@@ -248,5 +233,173 @@ func TestView_HelpOverlay_UnderlyingPanelsDimmed(t *testing.T) {
 	}
 	if !strings.Contains(view, "MY PULL REQUESTS") {
 		t.Errorf("underlying layout should remain visible (dimmed) behind overlay; got:\n%s", view)
+	}
+}
+
+// TestKey_ScrollDown_ForwardsToViewport verifies that j/↓ scroll the viewport
+// while the help overlay is visible.
+func TestKey_ScrollDown_ForwardsToViewport(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.helpVisible = true
+
+	// Apply j — model should remain in help mode and not crash.
+	m = applyMsg(m, keyRune('j'))
+	if !m.helpVisible {
+		t.Error("helpVisible should remain true after j")
+	}
+
+	// Apply ↓
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyDown})
+	if !m.helpVisible {
+		t.Error("helpVisible should remain true after ↓")
+	}
+}
+
+// TestKey_ScrollUp_ForwardsToViewport verifies that k/↑ scroll the viewport
+// while the help overlay is visible.
+func TestKey_ScrollUp_ForwardsToViewport(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.helpVisible = true
+
+	m = applyMsg(m, keyRune('k'))
+	if !m.helpVisible {
+		t.Error("helpVisible should remain true after k")
+	}
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyUp})
+	if !m.helpVisible {
+		t.Error("helpVisible should remain true after ↑")
+	}
+}
+
+// TestKey_PageDown_ForwardsToViewport verifies pgdown scrolls the viewport.
+func TestKey_PageDown_ForwardsToViewport(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.helpVisible = true
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	if !m.helpVisible {
+		t.Error("helpVisible should remain true after pgdown")
+	}
+}
+
+// TestKey_PageUp_ForwardsToViewport verifies pgup scrolls the viewport.
+func TestKey_PageUp_ForwardsToViewport(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.helpVisible = true
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyPgUp})
+	if !m.helpVisible {
+		t.Error("helpVisible should remain true after pgup")
+	}
+}
+
+// TestHelpModalView_NoDimensionsRendersWithoutSizeConstraint verifies that
+// helpModalView renders even when width/height are zero (no WindowSizeMsg yet).
+func TestHelpModalView_NoDimensionsRendersWithoutSizeConstraint(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	// width and height remain 0 (no WindowSizeMsg).
+	out := m.helpModalView()
+	if out == "" {
+		t.Error("helpModalView should return non-empty output even without terminal size")
+	}
+}
+
+// TestHelpModalView_WithDimensions verifies that helpModalView applies width/height
+// constraints when terminal dimensions are known.
+func TestHelpModalView_WithDimensions(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	m = applyMsg(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	out := m.helpModalView()
+	if out == "" {
+		t.Error("helpModalView should return non-empty output with terminal size")
+	}
+}
+
+// TestHelpModalView_AtBottomNoMoreIndicator verifies that the "↓ more" hint is
+// absent when the viewport is scrolled to the bottom.
+func TestHelpModalView_AtBottomNoMoreIndicator(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.helpViewport.GotoBottom()
+	out := m.helpModalView()
+	if strings.Contains(out, "↓ more") {
+		t.Errorf("helpModalView should not show '↓ more' when at bottom; got:\n%s", out)
+	}
+}
+
+// TestHelpViewportSize_ZeroInput verifies that zero dimensions return 0,0.
+func TestHelpViewportSize_ZeroInput(t *testing.T) {
+	w, h := helpViewportSize(0, 0)
+	if w != 0 || h != 0 {
+		t.Errorf("helpViewportSize(0,0) = %d,%d; want 0,0", w, h)
+	}
+	w, h = helpViewportSize(100, 0)
+	if w != 0 || h != 0 {
+		t.Errorf("helpViewportSize(100,0) = %d,%d; want 0,0", w, h)
+	}
+}
+
+// TestHelpViewportSize_MinimumClamp verifies that tiny terminals clamp to 1×1.
+func TestHelpViewportSize_MinimumClamp(t *testing.T) {
+	// Width and height so small that 75%−4 would be ≤0.
+	w, h := helpViewportSize(1, 1)
+	if w < 1 {
+		t.Errorf("helpViewportSize width should be at least 1; got %d", w)
+	}
+	if h < 1 {
+		t.Errorf("helpViewportSize height should be at least 1; got %d", h)
+	}
+}
+
+// TestHelpViewportSize_NormalTerminal verifies expected dimensions for a
+// typical 120×40 terminal.
+func TestHelpViewportSize_NormalTerminal(t *testing.T) {
+	w, h := helpViewportSize(120, 40)
+	// 120*3/4 - 4 = 86; 40*3/4 - 4 = 26
+	if w != 86 {
+		t.Errorf("helpViewportSize width = %d; want 86", w)
+	}
+	if h != 26 {
+		t.Errorf("helpViewportSize height = %d; want 26", h)
+	}
+}
+
+// TestWindowSizeMsg_SizesHelpViewport verifies that a WindowSizeMsg correctly
+// resizes the help viewport.
+func TestWindowSizeMsg_SizesHelpViewport(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+	)
+
+	m = applyMsg(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	wantW, wantH := helpViewportSize(120, 40)
+	if m.helpViewport.Width != wantW {
+		t.Errorf("helpViewport.Width = %d; want %d", m.helpViewport.Width, wantW)
+	}
+	if m.helpViewport.Height != wantH {
+		t.Errorf("helpViewport.Height = %d; want %d", m.helpViewport.Height, wantH)
 	}
 }
