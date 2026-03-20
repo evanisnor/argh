@@ -112,6 +112,16 @@ func (p *MyPRsPanel) View() string {
 	return sb.String()
 }
 
+// SelectedPR returns the PullRequest currently under the cursor, or nil when
+// the panel has no rows.
+func (p *MyPRsPanel) SelectedPR() *persistence.PullRequest {
+	if len(p.rows) == 0 {
+		return nil
+	}
+	pr := p.rows[p.cursor].pr
+	return &pr
+}
+
 // HasContent reports whether there are any PRs to display.
 func (p *MyPRsPanel) HasContent() bool {
 	return len(p.rows) > 0

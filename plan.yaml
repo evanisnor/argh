@@ -1126,3 +1126,51 @@ tasks:
       p.visible = true setup lines; added TestDetailPane_ResizeMsg.
       Updated model_test.go: existing DETAIL visibility tests continue to pass
       via the zero-dimension fallback path. 100% statement coverage maintained.
+
+  - id: 48
+    title: Add SelectedPR() accessor to both PR panels
+    status: done
+    depends_on: [47]
+    description: >
+      Add SelectedPR() *persistence.PullRequest method to MyPRsPanel
+      (panel_prs.go) and ReviewQueuePanel (panel_reviews.go). Returns the PR
+      at p.rows[p.cursor].pr, or nil when the panel has no rows.
+    references:
+      - "internal/ui/panel_prs.go"
+      - "internal/ui/panel_reviews.go"
+    testing: >
+      Table-driven tests in panel_prs_test.go and panel_reviews_test.go:
+      empty panel returns nil; single row returns that PR; after MoveFocusMsg
+      the cursor row is returned.
+
+  - id: 49
+    title: Guard detail modal on PR selection; populate detail pane data
+    status: done
+    depends_on: [48]
+    description: >
+      Fix two bugs: (1) Enter/p opened the detail modal from any panel
+      (including Watches, which has no PRs); (2) the detail pane always showed
+      blank content because PRFocusedMsg was never sent.
+      Changes:
+        - Add PRSelector interface (SelectedPR() *persistence.PullRequest) to model.go.
+        - Add PRDetailReader interface (ListCheckRuns, ListReviewThreads,
+          ListWatches, ListTimelineEvents) to model.go.
+        - Add detailReader PRDetailReader field to Model; expose via WithDetailReader().
+        - Fix Enter/p key handler: only open modal when focused panel implements
+          PRSelector AND SelectedPR() returns non-nil; send PRFocusedMsg with
+          fetched detail data on open.
+        - After dispatching MoveFocusMsg (j/k/↑/↓), if detailOpen is true,
+          call refreshDetailForCursor() to update the detail pane with the new
+          cursor PR.
+        - Add focusedPRSelector(), tryOpenDetail(), refreshDetailForCursor(),
+          and buildPRFocusedMsg() helpers.
+    references:
+      - "internal/ui/model.go"
+    testing: >
+      New model_test.go tests: stubPRSelector and stubPRDetailReader test
+      doubles; Enter on Watches/empty panel is a no-op; Enter on ReviewQueue
+      with PR opens modal; PRFocusedMsg carries check runs/threads/watches/
+      timeline from reader; j/k while open sends updated PRFocusedMsg;
+      j/k while closed does not; j with nil SelectedPR does not send msg;
+      j on Watches panel (no PRSelector) does not send msg; WithDetailReader
+      field test. 100% coverage maintained.

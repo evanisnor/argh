@@ -81,6 +81,27 @@ func newSuggStub(name string, hasSugg bool, suggView string) *stubCommandBarOver
 func (s *stubCommandBarOverlay) HasSuggestions() bool { return s.hasSugg }
 func (s *stubCommandBarOverlay) SuggestionsView() string { return s.suggView }
 
+// stubPRSelector extends stubSubModel to implement PRSelector. Used in tests
+// that need the Enter key to successfully open the detail modal.
+type stubPRSelector struct {
+	*stubSubModel
+	pr *persistence.PullRequest
+}
+
+func newSelectorStub(name string, pr *persistence.PullRequest) *stubPRSelector {
+	return &stubPRSelector{
+		stubSubModel: newStub(name, pr != nil),
+		pr:           pr,
+	}
+}
+
+func (s *stubPRSelector) Update(msg tea.Msg) (SubModel, tea.Cmd) {
+	s.stubSubModel.lastMsg = msg
+	return s, nil
+}
+
+func (s *stubPRSelector) SelectedPR() *persistence.PullRequest { return s.pr }
+
 
 
 // plainTheme returns a zero-decoration theme so View() output is easy to assert
@@ -435,8 +456,9 @@ func TestKey_TabCyclesFocusedPanel(t *testing.T) {
 
 // TestKey_EnterTogglesDetailPane verifies Enter toggles the detail pane open/closed.
 func TestKey_EnterTogglesDetailPane(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "test PR"}
 	m, _ := newTestModel(
-		newStub("myPRs", true),
+		newSelectorStub("myPRs", pr),
 		newStub("reviewQueue", true),
 		newStub("watches", false),
 		newStub("detail", false),
@@ -462,8 +484,9 @@ func TestKey_EnterTogglesDetailPane(t *testing.T) {
 
 // TestKey_PTogglesDetailPane verifies p key toggles the detail pane.
 func TestKey_PTogglesDetailPane(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "test PR"}
 	m, _ := newTestModel(
-		newStub("myPRs", true),
+		newSelectorStub("myPRs", pr),
 		newStub("reviewQueue", true),
 		newStub("watches", false),
 		newStub("detail", false),
@@ -478,6 +501,265 @@ func TestKey_PTogglesDetailPane(t *testing.T) {
 	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
 	if m.detailOpen {
 		t.Error("detail pane should be closed after pressing p again")
+	}
+}
+
+// stubPRDetailReader is a test double for PRDetailReader.
+type stubPRDetailReader struct {
+	checkRuns  []persistence.CheckRun
+	threads    []persistence.ReviewThread
+	watches    []persistence.Watch
+	timeline   []persistence.TimelineEvent
+}
+
+func (s *stubPRDetailReader) ListCheckRuns(_ string) ([]persistence.CheckRun, error) {
+	return s.checkRuns, nil
+}
+func (s *stubPRDetailReader) ListReviewThreads(_ string) ([]persistence.ReviewThread, error) {
+	return s.threads, nil
+}
+func (s *stubPRDetailReader) ListWatches() ([]persistence.Watch, error) {
+	return s.watches, nil
+}
+func (s *stubPRDetailReader) ListTimelineEvents(_ string) ([]persistence.TimelineEvent, error) {
+	return s.timeline, nil
+}
+
+// TestWithDetailReader verifies the fluent setter stores the reader.
+func TestWithDetailReader(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	if m.detailReader != nil {
+		t.Fatal("detailReader should be nil by default")
+	}
+	r := &stubPRDetailReader{}
+	m2 := m.WithDetailReader(r)
+	if m2.detailReader != r {
+		t.Error("WithDetailReader should set detailReader")
+	}
+}
+
+// TestKey_Enter_WatchesPanelNoOpen verifies Enter does NOT open the modal when
+// the Watches panel is focused (no PR selection possible).
+func TestKey_Enter_WatchesPanelNoOpen(t *testing.T) {
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", &persistence.PullRequest{ID: "pr1"}),
+		newStub("reviewQueue", true),
+		newStub("watches", true),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m.focused = PanelWatches
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.detailOpen {
+		t.Error("Enter on Watches panel should not open detail modal")
+	}
+}
+
+// TestKey_Enter_EmptyPRPanel verifies Enter does NOT open the modal when the
+// focused PR panel has no rows (SelectedPR returns nil).
+func TestKey_Enter_EmptyPRPanel(t *testing.T) {
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", nil), // empty panel
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.detailOpen {
+		t.Error("Enter with no selected PR should not open detail modal")
+	}
+}
+
+// TestKey_Enter_ReviewQueuePanel verifies Enter opens the modal from the
+// Review Queue panel when a PR is selected.
+func TestKey_Enter_ReviewQueuePanel(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "review me"}
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newSelectorStub("reviewQueue", pr),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m.focused = PanelReviewQueue
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.detailOpen {
+		t.Error("Enter on ReviewQueue with selected PR should open detail modal")
+	}
+}
+
+// TestKey_Enter_SendsPRFocusedMsgToDetailPane verifies that opening the detail
+// modal sends a PRFocusedMsg to the detail pane with real data from the reader.
+func TestKey_Enter_SendsPRFocusedMsgToDetailPane(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "my PR"}
+	reader := &stubPRDetailReader{
+		checkRuns: []persistence.CheckRun{{Name: "ci"}},
+		threads:   []persistence.ReviewThread{{ID: "t1"}},
+		watches:   []persistence.Watch{{PRURL: "u1"}},
+		timeline:  []persistence.TimelineEvent{{EventType: "pushed"}},
+	}
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", pr),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	m = m.WithDetailReader(reader)
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if !m.detailOpen {
+		t.Fatal("detail should be open after Enter with PR selected")
+	}
+	msg, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg)
+	if !ok {
+		t.Fatalf("detailPane should receive PRFocusedMsg, got %T", m.detailPane.(*stubSubModel).lastMsg)
+	}
+	if msg.PR.ID != "pr1" {
+		t.Errorf("PRFocusedMsg.PR.ID = %q, want %q", msg.PR.ID, "pr1")
+	}
+	if len(msg.CheckRuns) != 1 {
+		t.Errorf("PRFocusedMsg.CheckRuns len = %d, want 1", len(msg.CheckRuns))
+	}
+	if len(msg.Threads) != 1 {
+		t.Errorf("PRFocusedMsg.Threads len = %d, want 1", len(msg.Threads))
+	}
+	if len(msg.Watches) != 1 {
+		t.Errorf("PRFocusedMsg.Watches len = %d, want 1", len(msg.Watches))
+	}
+	if len(msg.TimelineEvents) != 1 {
+		t.Errorf("PRFocusedMsg.TimelineEvents len = %d, want 1", len(msg.TimelineEvents))
+	}
+}
+
+// TestKey_JK_WhenDetailOpen_RefreshesDetailPane verifies that cursor movement
+// while the detail modal is open sends an updated PRFocusedMsg to the detail pane.
+func TestKey_JK_WhenDetailOpen_RefreshesDetailPane(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "PR one"}
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", pr),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	// Open the detail modal first.
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.detailOpen {
+		t.Fatal("detail should be open")
+	}
+	// Clear the last message so we can verify the refresh sends a new one.
+	m.detailPane.(*stubSubModel).lastMsg = nil
+
+	// Press j — cursor moves, detail pane should get a new PRFocusedMsg.
+	m = applyMsg(m, keyRune('j'))
+
+	msg, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg)
+	if !ok {
+		t.Fatalf("after j with detail open, detailPane should receive PRFocusedMsg, got %T",
+			m.detailPane.(*stubSubModel).lastMsg)
+	}
+	if msg.PR.ID != "pr1" {
+		t.Errorf("PRFocusedMsg.PR.ID = %q, want %q", msg.PR.ID, "pr1")
+	}
+}
+
+// TestKey_KWhenDetailOpen_RefreshesDetailPane verifies k also triggers refresh.
+func TestKey_KWhenDetailOpen_RefreshesDetailPane(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "PR one"}
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", pr),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m.detailPane.(*stubSubModel).lastMsg = nil
+
+	m = applyMsg(m, keyRune('k'))
+
+	_, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg)
+	if !ok {
+		t.Fatalf("after k with detail open, detailPane should receive PRFocusedMsg, got %T",
+			m.detailPane.(*stubSubModel).lastMsg)
+	}
+}
+
+// TestKey_JWhenDetailClosed_NoRefresh verifies j does NOT send PRFocusedMsg
+// when the detail modal is closed.
+func TestKey_JWhenDetailClosed_NoRefresh(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1"}
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", pr),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	// detail is closed (default)
+	m = applyMsg(m, keyRune('j'))
+	if _, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg); ok {
+		t.Error("j with detail closed should not send PRFocusedMsg to detail pane")
+	}
+}
+
+// TestKey_JWhenDetailOpen_WatchesFocused verifies that pressing j when the
+// Watches panel is focused and the detail is open does not panic or send
+// PRFocusedMsg (Watches panel has no PR selector).
+func TestKey_JWhenDetailOpen_WatchesFocused(t *testing.T) {
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", true),
+		detail,
+		newStub("cmdBar", false),
+	)
+	// Force detail open and switch focus to Watches.
+	m.detailOpen = true
+	m.focused = PanelWatches
+
+	m = applyMsg(m, keyRune('j'))
+
+	// No PRFocusedMsg should be sent (watches has no PR selector).
+	if _, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg); ok {
+		t.Error("j on Watches panel should not send PRFocusedMsg to detail pane")
+	}
+}
+
+// TestKey_JWhenDetailOpen_EmptyPRPanel verifies that pressing j when the
+// detail is open but the panel has no PR rows does not send PRFocusedMsg.
+func TestKey_JWhenDetailOpen_EmptyPRPanel(t *testing.T) {
+	detail := newStub("detail", false)
+	// selectorStub with nil PR — returns nil from SelectedPR().
+	emptySelector := newSelectorStub("myPRs", nil)
+	m, _ := newTestModel(
+		emptySelector,
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	// Force detail open (unusual state, but exercises the nil-pr guard).
+	m.detailOpen = true
+
+	m = applyMsg(m, keyRune('j'))
+
+	if _, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg); ok {
+		t.Error("j with nil SelectedPR should not send PRFocusedMsg to detail pane")
 	}
 }
 
@@ -1544,8 +1826,9 @@ func TestModel_Enter_WhenCommandBarFocused_ForwardsToCommandBar(t *testing.T) {
 }
 
 func TestModel_Enter_WhenCommandBarNotFocused_TogglesDetail(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "test PR"}
 	m, _ := newTestModel(
-		newStub("myPRs", true),
+		newSelectorStub("myPRs", pr),
 		newStub("reviewQueue", true),
 		newStub("watches", false),
 		newStub("detail", false),

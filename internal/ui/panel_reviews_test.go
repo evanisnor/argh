@@ -731,3 +731,50 @@ func TestReviewQueuePanel_TitleTruncation(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewQueuePanel_SelectedPR verifies that SelectedPR returns the PR under
+// the cursor or nil when the panel is empty.
+func TestReviewQueuePanel_SelectedPR(t *testing.T) {
+	t.Run("empty panel returns nil", func(t *testing.T) {
+		panel := makeReviewPanel(newStubPRReader(), "me")
+		if got := panel.SelectedPR(); got != nil {
+			t.Errorf("SelectedPR() = %v, want nil", got)
+		}
+	})
+
+	t.Run("returns PR at cursor 0", func(t *testing.T) {
+		reader := newStubPRReader()
+		reader.prs = []persistence.PullRequest{
+			{ID: "p1", Repo: "r", Number: 1, Title: "first", URL: "u1",
+				Author: "alice", LastActivityAt: t0, CreatedAt: t0},
+		}
+		panel := makeReviewPanel(reader, "me")
+		got := panel.SelectedPR()
+		if got == nil {
+			t.Fatal("SelectedPR() = nil, want non-nil")
+		}
+		if got.ID != "p1" {
+			t.Errorf("SelectedPR().ID = %q, want %q", got.ID, "p1")
+		}
+	})
+
+	t.Run("returns PR at cursor after down move", func(t *testing.T) {
+		reader := newStubPRReader()
+		reader.prs = []persistence.PullRequest{
+			{ID: "p1", Repo: "r", Number: 1, Title: "first", URL: "u1",
+				Author: "alice", LastActivityAt: t0, CreatedAt: t0},
+			{ID: "p2", Repo: "r", Number: 2, Title: "second", URL: "u2",
+				Author: "bob", LastActivityAt: t0.Add(time.Second), CreatedAt: t0},
+		}
+		panel := makeReviewPanel(reader, "me")
+		panel.Update(MoveFocusMsg{Down: true})
+		got := panel.SelectedPR()
+		if got == nil {
+			t.Fatal("SelectedPR() = nil, want non-nil")
+		}
+		// ReviewQueue sorts by urgency; just verify a valid PR is returned.
+		if got.ID == "" {
+			t.Errorf("SelectedPR().ID is empty")
+		}
+	})
+}

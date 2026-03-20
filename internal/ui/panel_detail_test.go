@@ -114,9 +114,10 @@ func TestDetailPane_EnterAndPKeysToggleViaModel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			pr := &persistence.PullRequest{ID: "pr1", Title: "test PR"}
 			detail := newStub("detail", false)
 			m, _ := newTestModel(
-				newStub("myPRs", true), newStub("reviewQueue", true),
+				newSelectorStub("myPRs", pr), newStub("reviewQueue", true),
 				newStub("watches", false), detail, newStub("cmdBar", false),
 			)
 

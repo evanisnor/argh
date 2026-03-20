@@ -81,6 +81,23 @@ type CommandBarOverlay interface {
 	SuggestionsView() string
 }
 
+// PRSelector is the optional interface implemented by panels that hold a list
+// of pull requests with a cursor. The root model uses a type assertion to check
+// for this when handling the Enter key so that the detail modal is only opened
+// when there is an actual PR selection available.
+type PRSelector interface {
+	SelectedPR() *persistence.PullRequest
+}
+
+// PRDetailReader is the data-access interface the root model uses to populate
+// the detail pane when a PR is selected. It is satisfied by *persistence.DB.
+type PRDetailReader interface {
+	ListCheckRuns(prID string) ([]persistence.CheckRun, error)
+	ListReviewThreads(prID string) ([]persistence.ReviewThread, error)
+	ListWatches() ([]persistence.Watch, error)
+	ListTimelineEvents(prID string) ([]persistence.TimelineEvent, error)
+}
+
 // SubModel is the interface that every panel and pane implements so the root
 // model can delegate Update and View calls uniformly.
 type SubModel interface {
@@ -161,7 +178,8 @@ type Model struct {
 	eventCh           chan eventbus.Event
 	unsubscribe       func()
 	theme             Theme
-	dndToggler        DNDToggler // optional; nil = no DND control
+	dndToggler        DNDToggler    // optional; nil = no DND control
+	detailReader      PRDetailReader // optional; nil = detail pane not populated
 	width             int        // terminal width, 0 until first tea.WindowSizeMsg
 	height            int        // terminal height, 0 until first tea.WindowSizeMsg
 }
@@ -236,6 +254,14 @@ func NewWithTheme(version, username string, sub Subscriber,
 // key binding calls Toggle().
 func (m Model) WithDNDToggler(t DNDToggler) Model {
 	m.dndToggler = t
+	return m
+}
+
+// WithDetailReader returns a copy of m with the detail reader set to r.
+// When set, the detail pane is populated with real PR data (check runs,
+// review threads, watches, timeline) when the user opens it.
+func (m Model) WithDetailReader(r PRDetailReader) Model {
+	m.detailReader = r
 	return m
 }
 
@@ -480,7 +506,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focused = (m.focused + 1) % 3
 
 	case "enter", "p":
-		m.detailOpen = !m.detailOpen
+		if m.detailOpen {
+			m.detailOpen = false
+		} else {
+			m.detailOpen, _ = m.tryOpenDetail()
+		}
 
 	case "n", "N":
 		if m.detailOpen {
@@ -490,10 +520,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "j", "down":
-		return m.dispatchToFocused(MoveFocusMsg{Down: true})
+		result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: true})
+		m = result.(Model)
+		if m.detailOpen {
+			m.refreshDetailForCursor()
+		}
+		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 
 	case "k", "up":
-		return m.dispatchToFocused(MoveFocusMsg{Down: false})
+		result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: false})
+		m = result.(Model)
+		if m.detailOpen {
+			m.refreshDetailForCursor()
+		}
+		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 
 	case "/", ":":
 		slog.Debug("model.handleKey: activating command bar", "key", msg.String())
@@ -559,6 +599,69 @@ func (m Model) dispatchToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.watches, cmd = m.watches.Update(msg)
 	}
 	return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+}
+
+// focusedPRSelector returns the focused panel as a PRSelector if the currently
+// focused panel supports PR selection, otherwise returns nil.
+func (m Model) focusedPRSelector() PRSelector {
+	switch m.focused {
+	case PanelMyPRs:
+		if s, ok := m.myPRs.(PRSelector); ok {
+			return s
+		}
+	case PanelReviewQueue:
+		if s, ok := m.reviewQueue.(PRSelector); ok {
+			return s
+		}
+	}
+	return nil
+}
+
+// tryOpenDetail attempts to open the detail modal for the currently focused PR.
+// Returns (true, cmd) when a PR is selected and the detail reader is available;
+// (false, nil) otherwise (wrong panel, empty panel, or no reader wired up).
+func (m *Model) tryOpenDetail() (bool, tea.Cmd) {
+	sel := m.focusedPRSelector()
+	if sel == nil {
+		return false, nil
+	}
+	pr := sel.SelectedPR()
+	if pr == nil {
+		return false, nil
+	}
+	msg := m.buildPRFocusedMsg(pr)
+	m.detailPane, _ = m.detailPane.Update(msg)
+	return true, nil
+}
+
+// refreshDetailForCursor re-populates the detail pane with the PR currently
+// under the cursor. Called after cursor movement when the detail modal is open.
+func (m *Model) refreshDetailForCursor() {
+	sel := m.focusedPRSelector()
+	if sel == nil {
+		return
+	}
+	pr := sel.SelectedPR()
+	if pr == nil {
+		return
+	}
+	msg := m.buildPRFocusedMsg(pr)
+	m.detailPane, _ = m.detailPane.Update(msg)
+}
+
+// buildPRFocusedMsg fetches all detail data for pr from detailReader and
+// returns a populated PRFocusedMsg. If detailReader is nil, the message
+// contains only the PR itself with empty slices.
+func (m Model) buildPRFocusedMsg(pr *persistence.PullRequest) PRFocusedMsg {
+	msg := PRFocusedMsg{PR: *pr}
+	if m.detailReader == nil {
+		return msg
+	}
+	msg.CheckRuns, _ = m.detailReader.ListCheckRuns(pr.ID)
+	msg.Threads, _ = m.detailReader.ListReviewThreads(pr.ID)
+	msg.Watches, _ = m.detailReader.ListWatches()
+	msg.TimelineEvents, _ = m.detailReader.ListTimelineEvents(pr.ID)
+	return msg
 }
 
 // propagateResize sends each sub-model a ResizeMsg with its allocated width and
