@@ -1532,7 +1532,7 @@ tasks:
 
   - id: 87
     title: "Implement GHCLIMyPRsFetcher"
-    status: pending
+    status: done
     depends_on: [83, 85]
     description: >
       Implements Fetcher interface. Runs gh search prs for author's open PRs.
