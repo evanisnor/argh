@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -141,16 +142,17 @@ func runStatus(
 // tuiDeps groups all injectable boundaries for runTUI so the full startup
 // sequence can be exercised in tests without real GitHub credentials or disk I/O.
 type tuiDeps struct {
-	authenticate func(ctx context.Context) (*api.Credentials, error)
-	runSetup     func(ctx context.Context) (ui.SetupResult, error)
-	saveToken    func(token string) error
-	deleteToken  func() error
-	loadConfig   func() (config.Config, error)
-	openDB       func() (*persistence.DB, error)
-	auditLogPath func() (string, error)
-	debugLogPath func() (string, error)
-	newTicker    api.NewTickerFunc // nil → api.NewRealTicker
-	runProgram   func(m tea.Model) error
+	authenticate  func(ctx context.Context) (*api.Credentials, error)
+	runSetup      func(ctx context.Context) (ui.SetupResult, error)
+	saveToken     func(token string) error
+	saveTokenType func(tt config.TokenType) error
+	deleteToken   func() error
+	loadConfig    func() (config.Config, error)
+	openDB        func() (*persistence.DB, error)
+	auditLogPath  func() (string, error)
+	debugLogPath  func() (string, error)
+	newTicker     api.NewTickerFunc // nil → api.NewRealTicker
+	runProgram    func(m tea.Model) error
 }
 
 // setupVerify and setupRunProgram are the functions used by the setup modal in
@@ -165,6 +167,8 @@ var setupRunProgram = func(m tea.Model) (tea.Model, error) {
 
 // productionDeps returns a tuiDeps wired to real OS resources.
 func productionDeps() tuiDeps {
+	cfg, _ := config.Load(config.OSFilesystem{})
+	browser := &osBrowserOpener{}
 	return tuiDeps{
 		authenticate: func(ctx context.Context) (*api.Credentials, error) {
 			return api.Authenticate(ctx, config.OSFilesystem{}, &api.GitHubTokenVerifier{})
@@ -173,10 +177,20 @@ func productionDeps() tuiDeps {
 			return ui.RunSetup(ctx, ui.SetupDeps{
 				Verify:     setupVerify,
 				RunProgram: setupRunProgram,
+				DeviceFlow: &api.GitHubDeviceFlowClient{
+					HTTP:    &http.Client{Timeout: 30 * time.Second},
+					Sleeper: api.RealSleeper(),
+				},
+				OpenBrowser: browser.Open,
+				ClientID:    cfg.OAuth.ClientID,
+				Scopes:      []string{"repo", "read:org"},
 			})
 		},
 		saveToken: func(token string) error {
 			return config.SaveToken(config.OSFilesystem{}, token)
+		},
+		saveTokenType: func(tt config.TokenType) error {
+			return config.SaveTokenType(config.OSFilesystem{}, tt)
 		},
 		deleteToken: func() error {
 			return config.DeleteToken(config.OSFilesystem{})
@@ -262,6 +276,9 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 			if err := deps.saveToken(result.Token); err != nil {
 				return fmt.Errorf("saving token: %w", err)
 			}
+			if err := deps.saveTokenType(result.TokenType); err != nil {
+				return fmt.Errorf("saving token type: %w", err)
+			}
 			creds, err = deps.authenticate(ctx)
 			if err != nil {
 				return fmt.Errorf("authentication after setup: %w", err)
@@ -302,6 +319,12 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 
 	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: creds.Token})
 	httpClient := oauth2.NewClient(ctx, src)
+
+	// Wrap transport with SSO detection so 403s with X-GitHub-SSO header
+	// surface the authorization URL in the TUI status bar.
+	ssoObserver := &api.BusSSOObserver{Bus: bus}
+	httpClient.Transport = api.NewSSOTransport(httpClient.Transport, ssoObserver)
+
 	gqlClient := githubv4.NewClient(httpClient)
 	restClient := github.NewClient(httpClient)
 

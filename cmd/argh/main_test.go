@@ -165,6 +165,9 @@ func happyDeps(t *testing.T) tuiDeps {
 		saveToken: func(_ string) error {
 			return nil
 		},
+		saveTokenType: func(_ config.TokenType) error {
+			return nil
+		},
 		deleteToken: func() error {
 			return nil
 		},
@@ -256,6 +259,25 @@ func TestRunTUI_TokenNotFound_SaveError(t *testing.T) {
 	err := runTUI(ctx, "test", deps)
 	if err == nil || !strings.Contains(err.Error(), "saving token") {
 		t.Errorf("runTUI() err = %v, want saving token error", err)
+	}
+}
+
+func TestRunTUI_TokenNotFound_SaveTokenTypeError(t *testing.T) {
+	deps := happyDeps(t)
+	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
+		return nil, config.ErrTokenNotFound
+	}
+	deps.runSetup = func(_ context.Context) (ui.SetupResult, error) {
+		return ui.SetupResult{Token: "new-token", TokenType: config.TokenTypeOAuth}, nil
+	}
+	deps.saveTokenType = func(_ config.TokenType) error {
+		return errors.New("disk full")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runTUI(ctx, "test", deps)
+	if err == nil || !strings.Contains(err.Error(), "saving token type") {
+		t.Errorf("runTUI() err = %v, want saving token type error", err)
 	}
 }
 
@@ -838,6 +860,12 @@ func TestProductionDeps_SaveToken(t *testing.T) {
 	_ = deps.saveToken("ghp_test_coverage")
 	// Clean up by deleting the token.
 	_ = deps.deleteToken()
+}
+
+func TestProductionDeps_SaveTokenType(t *testing.T) {
+	deps := productionDeps()
+	// Exercise the closure for coverage.
+	_ = deps.saveTokenType(config.TokenTypePAT)
 }
 
 func TestProductionDeps_DeleteToken(t *testing.T) {

@@ -1409,7 +1409,7 @@ tasks:
 
   - id: 67
     title: "Wire OAuth device flow and SSO transport into main.go"
-    status: pending
+    status: done
     depends_on: [62, 63, 65, 66]
     description: >
       Update tuiDeps runSetup signature to return SetupResult. Add saveTokenType
