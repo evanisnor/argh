@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
@@ -97,24 +98,19 @@ func (p *MyPRsPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 // RowCount returns the number of PR rows in the panel.
 func (p *MyPRsPanel) RowCount() int { return len(p.rows) }
 
-// Column widths for the My PRs table layout.
-const (
-	prColSID     = 1
-	prColSpace   = 1
-	prColWatch   = 2
-	prColRepo    = 14
-	prColNumber  = 5
-	prColStatus  = 8
-	prColCI      = 2
-	prColReviews = 5
-	prColComment = 2
-	prColAge     = 3
-	prColSep     = 3 // " │ "
-	prNumSeps    = 8
-	prFixedWidth = prColSID + prColSpace + prColWatch + prColRepo + prColNumber +
-		prColStatus + prColCI + prColReviews + prColComment + prColAge +
-		prNumSeps*prColSep
-)
+// prColumns defines the column layout for the My PRs table.
+var prColumns = []columnDef{
+	{width: 1, align: lipgloss.Right, trailSep: " "}, // SID
+	{width: 2, align: lipgloss.Right},                 // Watch
+	{width: 14, align: lipgloss.Left, trailSep: " │ "}, // Repo
+	{width: 5, align: lipgloss.Left, trailSep: " │ "},  // #
+	{width: 0, align: lipgloss.Left, trailSep: " │ "},  // Title (flex)
+	{width: 8, align: lipgloss.Left, trailSep: " │ "},  // Status
+	{width: 2, align: lipgloss.Left, trailSep: " │ "},  // CI
+	{width: 5, align: lipgloss.Left, trailSep: " │ "},  // Reviews
+	{width: 2, align: lipgloss.Left, trailSep: " │ "},  // Comments
+	{width: 3, align: lipgloss.Left},                    // Age
+}
 
 // View renders the panel content (title/border is added by the root model).
 func (p *MyPRsPanel) View() string {
@@ -136,21 +132,9 @@ func (p *MyPRsPanel) View() string {
 
 // renderHeader builds the column header line for the My PRs table.
 func (p *MyPRsPanel) renderHeader() string {
-	sep := " │ "
-	titleWidth := p.titleWidth()
-	header := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s",
-		prColSID, "",
-		prColWatch, "",
-		prColRepo, "REPO", sep,
-		prColNumber, "#", sep,
-		titleWidth, "TITLE", sep,
-		prColStatus, "●", sep,
-		prColCI, "⚙", sep,
-		prColReviews, "✓✗", sep,
-		prColComment, "💬", sep,
-		prColAge, "⏱",
-	)
-	return lipgloss.NewStyle().Faint(true).Render(header)
+	b := &rowBuilder{columns: prColumns, totalWidth: p.width}
+	cells := []string{"", "", "REPO", "#", "TITLE", "●", "⚙", "✓✗", "💬", "⏱"}
+	return b.buildRow(cells, lipgloss.NewStyle().Faint(true))
 }
 
 // SelectedPR returns the PullRequest currently under the cursor, or nil when
@@ -222,18 +206,6 @@ func (p *MyPRsPanel) refresh() error {
 	return nil
 }
 
-// titleWidth returns the flex title column width based on the panel's allocated width.
-func (p *MyPRsPanel) titleWidth() int {
-	if p.width <= 0 {
-		return 40 // generous default before first resize
-	}
-	w := p.width - prFixedWidth
-	if w < 1 {
-		w = 1
-	}
-	return w
-}
-
 // renderRow formats a single PR row as a table row with fixed-width columns.
 func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 	sid := row.sessionID
@@ -251,27 +223,19 @@ func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 		title = "[draft] " + title
 	}
 
-	sep := " │ "
-	titleWidth := p.titleWidth()
-	title = truncateTitle(title, titleWidth, 0)
-	// Pad title to fixed width.
-	titleRunes := []rune(title)
-	if len(titleRunes) < titleWidth {
-		title = title + strings.Repeat(" ", titleWidth-len(titleRunes))
+	b := &rowBuilder{columns: prColumns, totalWidth: p.width}
+	cells := []string{
+		sid,
+		watchIcon,
+		row.pr.Repo,
+		fmt.Sprintf("#%d", row.pr.Number),
+		title,
+		prStatusDisplay(row.pr.Status, row.pr.Draft),
+		prCIDisplay(row.pr.CIState),
+		prReviewDisplay(row.approvedCount, row.changesCount),
+		fmt.Sprintf("%d", row.commentCount),
+		formatAge(now.Sub(row.pr.LastActivityAt)),
 	}
-
-	text := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s",
-		prColSID, sid,
-		prColWatch, watchIcon,
-		prColRepo, truncateTitle(row.pr.Repo, prColRepo, 0), sep,
-		prColNumber, fmt.Sprintf("#%d", row.pr.Number), sep,
-		title, sep,
-		prColStatus, prStatusDisplay(row.pr.Status, row.pr.Draft), sep,
-		prColCI, prCIDisplay(row.pr.CIState), sep,
-		prColReviews, prReviewDisplay(row.approvedCount, row.changesCount), sep,
-		prColComment, fmt.Sprintf("%d", row.commentCount), sep,
-		prColAge, formatAge(now.Sub(row.pr.LastActivityAt)),
-	)
 
 	style := lipgloss.NewStyle()
 	if row.pr.Draft {
@@ -295,11 +259,13 @@ func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 	if focused {
 		style = style.Reverse(true)
 	}
-	return style.Render(text)
+	return b.buildRow(cells, style)
 }
 
 // truncateTitle truncates s with a trailing "…" if width > 0 and
-// len(prefix)+len(s) would exceed width. Returns s unchanged when width is 0.
+// fixedLen + displayWidth(s) would exceed width. Uses display-width
+// measurement so emoji and wide characters are handled correctly.
+// Returns s unchanged when width is 0.
 func truncateTitle(s string, width, fixedLen int) string {
 	if width <= 0 {
 		return s
@@ -308,14 +274,13 @@ func truncateTitle(s string, width, fixedLen int) string {
 	if maxTitle <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= maxTitle {
+	if ansi.StringWidth(s) <= maxTitle {
 		return s
 	}
 	if maxTitle <= 1 {
 		return "…"
 	}
-	return string(runes[:maxTitle-1]) + "…"
+	return ansi.Truncate(s, maxTitle, "…")
 }
 
 // prStatusDisplay converts a status string to its display form.

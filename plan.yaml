@@ -1764,7 +1764,7 @@ tasks:
 
   - id: 105
     title: "Refactor My PRs panel to use rowBuilder"
-    status: pending
+    status: done
     depends_on: [104]
     description: >
       Replace renderHeader/renderRow in panel_prs.go with rowBuilder calls.
