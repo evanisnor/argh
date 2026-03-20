@@ -1152,3 +1152,341 @@ func TestSetup_DeviceFlow_P_Ignored(t *testing.T) {
 		t.Error("expected nil command for 'p' on device flow")
 	}
 }
+
+// ── gh CLI Screen ───────────────────────────────────────────────────────────
+
+func ghcliModel(verify func(context.Context) (string, error)) SetupModel {
+	return newSetupModel(context.Background(), SetupDeps{
+		Verify:      okVerify,
+		DeviceFlow:  &api.StubDeviceFlowClient{},
+		OpenBrowser: func(_ string) error { return nil },
+		ClientID:    "test-client",
+		GHCLIVerify: verify,
+	})
+}
+
+func TestSetup_MethodSelect_C_TransitionsToGHCLI(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+
+	if m.screen != screenGHCLI {
+		t.Errorf("expected screenGHCLI, got %d", m.screen)
+	}
+	if !m.verifying {
+		t.Error("expected verifying=true")
+	}
+	if cmd == nil {
+		t.Fatal("expected non-nil command for ghcli verify")
+	}
+}
+
+func TestSetup_MethodSelect_C_NoVerifier_Ignored(t *testing.T) {
+	m := setupModel() // no GHCLIVerify set
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+
+	if m.screen != screenMethodSelect {
+		t.Errorf("expected to stay on method selection, got %d", m.screen)
+	}
+	if cmd != nil {
+		t.Error("expected nil command when no verifier")
+	}
+}
+
+func TestSetup_MethodSelect_View_ShowsGHCLI_WhenAvailable(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+
+	v := m.View()
+	if !strings.Contains(v, "[c]") {
+		t.Error("View should contain '[c]' option when GHCLIVerify is set")
+	}
+	if !strings.Contains(v, "gh CLI") {
+		t.Error("View should contain 'gh CLI'")
+	}
+}
+
+func TestSetup_MethodSelect_View_HidesGHCLI_WhenUnavailable(t *testing.T) {
+	m := setupModel() // no GHCLIVerify
+
+	v := m.View()
+	if strings.Contains(v, "[c]") {
+		t.Error("View should not contain '[c]' option when GHCLIVerify is nil")
+	}
+}
+
+func TestSetup_GHCLI_VerifySuccess(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+
+	// Press 'c' to start
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+
+	// Execute the verify command
+	result := cmd()
+	updated, cmd = m.Update(result)
+	m = updated.(SetupModel)
+
+	if m.verifying {
+		t.Error("expected verifying=false after success")
+	}
+	if !m.done {
+		t.Error("expected done=true after verify success")
+	}
+	if m.token != "ghcli" {
+		t.Errorf("token: got %q, want %q", m.token, "ghcli")
+	}
+	if m.tokenType != config.TokenTypeGHCLI {
+		t.Errorf("tokenType: got %q, want %q", m.tokenType, config.TokenTypeGHCLI)
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_GHCLI_VerifyError(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "", errors.New("gh not found")
+	})
+
+	// Press 'c' to start
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+
+	// Execute the verify command
+	result := cmd()
+	updated, _ = m.Update(result)
+	m = updated.(SetupModel)
+
+	if m.verifying {
+		t.Error("expected verifying=false after error")
+	}
+	if m.done {
+		t.Error("expected done=false after verify error")
+	}
+	if m.errMsg != "gh not found" {
+		t.Errorf("errMsg: got %q, want %q", m.errMsg, "gh not found")
+	}
+
+	v := m.View()
+	if !strings.Contains(v, "gh not found") {
+		t.Error("View should contain error message")
+	}
+	if !strings.Contains(v, "gh auth login") {
+		t.Error("View should contain 'gh auth login' hint")
+	}
+	if !strings.Contains(v, "[c] retry") {
+		t.Error("View should contain retry option")
+	}
+}
+
+func TestSetup_GHCLI_Retry_AfterError(t *testing.T) {
+	calls := 0
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", errors.New("not authenticated")
+		}
+		return "octocat", nil
+	})
+
+	// First attempt: error
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+	result := cmd()
+	updated, _ = m.Update(result)
+	m = updated.(SetupModel)
+
+	if m.errMsg == "" {
+		t.Fatal("expected error after first attempt")
+	}
+
+	// Retry with 'c'
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+
+	if !m.verifying {
+		t.Error("expected verifying=true on retry")
+	}
+	if m.errMsg != "" {
+		t.Error("expected errMsg cleared on retry")
+	}
+
+	result = cmd()
+	updated, cmd = m.Update(result)
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after successful retry")
+	}
+	if m.token != "ghcli" {
+		t.Errorf("token: got %q, want %q", m.token, "ghcli")
+	}
+}
+
+func TestSetup_GHCLI_Q_Quits(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "", errors.New("error")
+	})
+
+	// Start and fail
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+	result := cmd()
+	updated, _ = m.Update(result)
+	m = updated.(SetupModel)
+
+	// Press q to quit
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(SetupModel)
+
+	if !m.quit {
+		t.Error("expected quit=true")
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_GHCLI_Esc_Quits(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+	m.screen = screenGHCLI
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(SetupModel)
+
+	if !m.quit {
+		t.Error("expected quit=true on Esc")
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_GHCLI_View_Verifying(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+	m.screen = screenGHCLI
+	m.verifying = true
+
+	v := m.View()
+	if !strings.Contains(v, "Verifying gh CLI") {
+		t.Error("View should show verifying message")
+	}
+	if !strings.Contains(v, "gh CLI Setup") {
+		t.Error("View should contain title")
+	}
+}
+
+func TestSetup_GHCLI_View_WithDimensions(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+	m.screen = screenGHCLI
+	m.verifying = true
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(SetupModel)
+
+	v := m.View()
+	if v == "" {
+		t.Error("View should not be empty with dimensions set")
+	}
+}
+
+func TestSetup_GHCLI_UnknownKey_Ignored(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "", errors.New("error")
+	})
+	m.screen = screenGHCLI
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(SetupModel)
+
+	if m.screen != screenGHCLI {
+		t.Errorf("expected to stay on ghcli screen, got %d", m.screen)
+	}
+	if cmd != nil {
+		t.Error("expected nil command for unknown key")
+	}
+}
+
+func TestSetup_GHCLI_C_DuringVerifying_Ignored(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+	m.screen = screenGHCLI
+	m.verifying = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(SetupModel)
+
+	if cmd != nil {
+		t.Error("expected nil command when c pressed during verification")
+	}
+}
+
+func TestSetup_GHCLI_View_DefaultState(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+	m.screen = screenGHCLI
+	// Neither verifying nor errMsg — default view
+	v := m.View()
+	if !strings.Contains(v, "gh CLI Setup") {
+		t.Error("View should contain title")
+	}
+}
+
+func TestSetup_GHCLI_UnknownMsg_Ignored(t *testing.T) {
+	m := ghcliModel(func(_ context.Context) (string, error) {
+		return "octocat", nil
+	})
+	m.screen = screenGHCLI
+
+	updated, _ := m.Update(tea.FocusMsg{})
+	m = updated.(SetupModel)
+
+	if m.quit {
+		t.Error("unexpected quit on unknown message")
+	}
+}
+
+func TestRunSetup_Success_GHCLI(t *testing.T) {
+	result, err := RunSetup(context.Background(), SetupDeps{
+		Verify: okVerify,
+		RunProgram: func(m tea.Model) (tea.Model, error) {
+			sm := m.(SetupModel)
+			sm.token = "ghcli"
+			sm.tokenType = config.TokenTypeGHCLI
+			sm.done = true
+			return sm, nil
+		},
+		DeviceFlow:  &api.StubDeviceFlowClient{},
+		OpenBrowser: func(_ string) error { return nil },
+		ClientID:    "test-client",
+		GHCLIVerify: func(_ context.Context) (string, error) { return "octocat", nil },
+	})
+	if err != nil {
+		t.Fatalf("RunSetup error: %v", err)
+	}
+	if result.Quit {
+		t.Error("expected Quit=false")
+	}
+	if result.Token != "ghcli" {
+		t.Errorf("Token: got %q, want %q", result.Token, "ghcli")
+	}
+	if result.TokenType != config.TokenTypeGHCLI {
+		t.Errorf("TokenType: got %q, want %q", result.TokenType, config.TokenTypeGHCLI)
+	}
+}

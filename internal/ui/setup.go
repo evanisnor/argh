@@ -20,6 +20,7 @@ const (
 	screenDeviceFlow
 	screenPATEntry
 	screenSSO
+	screenGHCLI
 )
 
 // SetupDeps groups the injectable boundaries for RunSetup.
@@ -30,6 +31,7 @@ type SetupDeps struct {
 	OpenBrowser func(url string) error
 	ClientID    string
 	Scopes      []string
+	GHCLIVerify func(ctx context.Context) (string, error)
 }
 
 // SetupResult holds the outcome of a completed setup flow.
@@ -74,6 +76,12 @@ type deviceTokenMsg struct {
 	err  error
 }
 
+// ghcliVerifyMsg carries the result of verifying gh CLI authentication.
+type ghcliVerifyMsg struct {
+	login string
+	err   error
+}
+
 // SetupModel is the Bubble Tea model for the multi-screen setup flow.
 type SetupModel struct {
 	screen    setupScreen
@@ -101,6 +109,9 @@ type SetupModel struct {
 	verifyURI   string
 	polling     bool
 	ssoURL      string
+
+	// gh CLI verification
+	ghcliVerify func(ctx context.Context) (string, error)
 }
 
 func newSetupModel(ctx context.Context, deps SetupDeps) SetupModel {
@@ -120,6 +131,7 @@ func newSetupModel(ctx context.Context, deps SetupDeps) SetupModel {
 		openBrowser: deps.OpenBrowser,
 		clientID:    deps.ClientID,
 		scopes:      deps.Scopes,
+		ghcliVerify: deps.GHCLIVerify,
 	}
 }
 
@@ -147,6 +159,9 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case deviceTokenMsg:
 		return m.handleDeviceToken(msg)
+
+	case ghcliVerifyMsg:
+		return m.handleGHCLIVerify(msg)
 	}
 
 	if m.screen == screenPATEntry {
@@ -197,6 +212,15 @@ func (m SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleDefault(msg)
 
+	case "c":
+		if m.screen == screenMethodSelect && m.ghcliVerify != nil {
+			return m.startGHCLIVerify()
+		}
+		if m.screen == screenGHCLI && !m.verifying {
+			return m.startGHCLIVerify()
+		}
+		return m.handleDefault(msg)
+
 	case "p":
 		if m.screen == screenMethodSelect {
 			m.screen = screenPATEntry
@@ -224,6 +248,10 @@ func (m SetupModel) handleQ(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.screen == screenSSO {
 		m.done = true
+		return m, tea.Quit
+	}
+	if m.screen == screenGHCLI {
+		m.quit = true
 		return m, tea.Quit
 	}
 	// PAT entry screen
@@ -340,6 +368,30 @@ func (m SetupModel) handleDeviceToken(msg deviceTokenMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m SetupModel) startGHCLIVerify() (tea.Model, tea.Cmd) {
+	m.screen = screenGHCLI
+	m.verifying = true
+	m.errMsg = ""
+	verify := m.ghcliVerify
+	ctx := m.ctx
+	return m, func() tea.Msg {
+		login, err := verify(ctx)
+		return ghcliVerifyMsg{login: login, err: err}
+	}
+}
+
+func (m SetupModel) handleGHCLIVerify(msg ghcliVerifyMsg) (tea.Model, tea.Cmd) {
+	m.verifying = false
+	if msg.err != nil {
+		m.errMsg = msg.err.Error()
+		return m, nil
+	}
+	m.token = "ghcli"
+	m.tokenType = config.TokenTypeGHCLI
+	m.done = true
+	return m, tea.Quit
+}
+
 // View renders the current setup screen.
 func (m SetupModel) View() string {
 	var content string
@@ -352,6 +404,8 @@ func (m SetupModel) View() string {
 		content = m.viewPATEntry()
 	case screenSSO:
 		content = m.viewSSO()
+	case screenGHCLI:
+		content = m.viewGHCLI()
 	}
 
 	if m.width > 0 && m.height > 0 {
@@ -365,7 +419,11 @@ func (m SetupModel) View() string {
 func (m SetupModel) viewMethodSelect() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C0C0FF"))
 	title := titleStyle.Render("argh - Authentication Setup")
-	options := "  [g] Login with GitHub (recommended)\n  [p] Enter Personal Access Token\n  [q] Quit"
+	options := "  [g] Login with GitHub (recommended)\n  [p] Enter Personal Access Token"
+	if m.ghcliVerify != nil {
+		options += "\n  [c] Use gh CLI (for SSO organizations)"
+	}
+	options += "\n  [q] Quit"
 	return title + "\n\n" + options
 }
 
@@ -427,4 +485,22 @@ func (m SetupModel) viewPATEntry() string {
 		content += "\n\n" + status
 	}
 	return content
+}
+
+func (m SetupModel) viewGHCLI() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C0C0FF"))
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B"))
+
+	title := titleStyle.Render("argh - gh CLI Setup")
+
+	if m.verifying {
+		return title + "\n\nVerifying gh CLI authentication..."
+	}
+
+	if m.errMsg != "" {
+		hint := "Run `gh auth login` to authenticate, then try again."
+		return title + "\n\n" + errorStyle.Render("error: "+m.errMsg) + "\n\n" + hint + "\n\n[c] retry  [q]uit"
+	}
+
+	return title + "\n\nVerifying gh CLI authentication..."
 }

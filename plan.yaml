@@ -1585,7 +1585,7 @@ tasks:
 
   - id: 92
     title: "Add gh CLI option to setup flow"
-    status: pending
+    status: done
     depends_on: [86, 84]
     description: >
       Add a third option [c] Use gh CLI to the method selection screen.
