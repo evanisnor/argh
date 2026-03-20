@@ -203,7 +203,7 @@ func New(version, username string, sub Subscriber,
 
 	t := newTheme(lipgloss.HasDarkBackground())
 	vp := viewport.New(80, 20)
-	vp.SetContent(renderHelpContent(t))
+	vp.SetContent(renderHelpContent(t, version, username))
 
 	return Model{
 		version:      version,
@@ -239,7 +239,7 @@ func NewWithTheme(version, username string, sub Subscriber,
 	})
 
 	vp2 := viewport.New(80, 20)
-	vp2.SetContent(renderHelpContent(theme))
+	vp2.SetContent(renderHelpContent(theme, version, username))
 
 	return Model{
 		version:      version,
@@ -324,7 +324,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		vpW, vpH := helpViewportSize(m.width, m.height)
 		m.helpViewport.Width = vpW
 		m.helpViewport.Height = vpH
-		m.helpViewport.SetContent(renderHelpContent(m.theme))
+		m.helpViewport.SetContent(renderHelpContent(m.theme, m.version, m.username))
 		m.propagateResize()
 		return m, waitForDBEvent(m.eventCh)
 
@@ -807,8 +807,7 @@ func (m Model) View() string {
 
 // headerView renders the top status bar spanning the full terminal width.
 func (m Model) headerView() string {
-	left := fmt.Sprintf("  argh %s  @%s", m.version, m.username)
-	right := "[?] help"
+	left := "  argh"
 	status := ""
 	if m.statusText != "" {
 		elapsed := m.clock.Now().Sub(m.lastEventTime)
@@ -824,7 +823,7 @@ func (m Model) headerView() string {
 	if m.width > 0 {
 		style = style.Width(m.width)
 	}
-	return style.Render(left + status + dnd + "  " + right)
+	return style.Render(left + status + dnd)
 }
 
 // panelView wraps a sub-model's View() in a titled border.

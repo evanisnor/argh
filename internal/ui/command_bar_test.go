@@ -98,7 +98,7 @@ func TestCommandBar_SetPRRefsAndCollaborators(t *testing.T) {
 func TestCommandBar_View_Unfocused(t *testing.T) {
 	cb := NewCommandBar()
 	v := cb.View()
-	if v != "/ or : for commands" {
+	if v != "/ or : for commands · ? for help" {
 		t.Errorf("unexpected unfocused view: %q", v)
 	}
 }

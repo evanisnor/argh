@@ -112,7 +112,7 @@ func TestShowHelpMsg_OverlayVisibleInView(t *testing.T) {
 // TestOverlayContent_ContainsKeyboardShortcuts verifies the overlay includes
 // all documented keyboard shortcuts.
 func TestOverlayContent_ContainsKeyboardShortcuts(t *testing.T) {
-	content := renderHelpContent(plainTheme())
+	content := renderHelpContent(plainTheme(), "v0.0.0", "testuser")
 
 	shortcuts := []string{
 		"Tab",
@@ -129,7 +129,7 @@ func TestOverlayContent_ContainsKeyboardShortcuts(t *testing.T) {
 // TestOverlayContent_ContainsCommands verifies the overlay includes all
 // interactive commands.
 func TestOverlayContent_ContainsCommands(t *testing.T) {
-	content := renderHelpContent(plainTheme())
+	content := renderHelpContent(plainTheme(), "v0.0.0", "testuser")
 
 	commands := []string{
 		":open",
@@ -161,7 +161,7 @@ func TestOverlayContent_ContainsCommands(t *testing.T) {
 // TestOverlayContent_ContainsWatchSyntax verifies the overlay includes watch
 // trigger and action syntax examples.
 func TestOverlayContent_ContainsWatchSyntax(t *testing.T) {
-	content := renderHelpContent(plainTheme())
+	content := renderHelpContent(plainTheme(), "v0.0.0", "testuser")
 
 	if !strings.Contains(content, "Watch Trigger") {
 		t.Errorf("overlay missing 'Watch Trigger' section; got:\n%s", content)
@@ -183,7 +183,7 @@ func TestRenderHelpContent_DarkTheme(t *testing.T) {
 	theme := plainTheme()
 	theme.Dark = true
 
-	out := renderHelpContent(theme)
+	out := renderHelpContent(theme, "v1.2.3", "testuser")
 	if out == "" {
 		t.Error("renderHelpContent should return non-empty output for dark theme")
 	}
@@ -198,9 +198,21 @@ func TestRenderHelpContent_LightTheme(t *testing.T) {
 	theme := plainTheme()
 	theme.Dark = false
 
-	out := renderHelpContent(theme)
+	out := renderHelpContent(theme, "v1.2.3", "testuser")
 	if out == "" {
 		t.Error("renderHelpContent should return non-empty output for light theme")
+	}
+}
+
+// TestRenderHelpContent_IncludesVersionAndUsername verifies that the version
+// and username are rendered in the help modal header.
+func TestRenderHelpContent_IncludesVersionAndUsername(t *testing.T) {
+	out := renderHelpContent(plainTheme(), "v9.8.7", "octocat")
+	if !strings.Contains(out, "v9.8.7") {
+		t.Errorf("renderHelpContent output missing version; got:\n%s", out)
+	}
+	if !strings.Contains(out, "@octocat") {
+		t.Errorf("renderHelpContent output missing username; got:\n%s", out)
 	}
 }
 

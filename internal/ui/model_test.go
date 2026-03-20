@@ -151,7 +151,6 @@ func TestView_ContainsAllPanelRegions(t *testing.T) {
 
 	regions := []string{
 		"argh",
-		"testuser",
 		"MY PULL REQUESTS",
 		"REVIEW QUEUE",
 		"WATCHES",
@@ -780,9 +779,9 @@ func TestInit_ReturnsNonNilCmd(t *testing.T) {
 	}
 }
 
-// TestView_HeaderContainsVersionAndUsername verifies the header bar shows
-// the app version and authenticated username.
-func TestView_HeaderContainsVersionAndUsername(t *testing.T) {
+// TestView_HeaderContainsAppName verifies the header bar shows the app name
+// but not the version or username (those appear in the help modal).
+func TestView_HeaderContainsAppName(t *testing.T) {
 	m, _ := newTestModel(
 		newStub("myPRs", true),
 		newStub("reviewQueue", true),
@@ -792,11 +791,14 @@ func TestView_HeaderContainsVersionAndUsername(t *testing.T) {
 	)
 
 	view := m.View()
-	if !strings.Contains(view, "v0.0.0") {
-		t.Errorf("View() header missing version string, got:\n%s", view)
+	if !strings.Contains(view, "argh") {
+		t.Errorf("View() header missing app name, got:\n%s", view)
 	}
-	if !strings.Contains(view, "testuser") {
-		t.Errorf("View() header missing username, got:\n%s", view)
+	if strings.Contains(view, "v0.0.0") {
+		t.Errorf("View() header should not contain version string, got:\n%s", view)
+	}
+	if strings.Contains(view, "testuser") {
+		t.Errorf("View() header should not contain username, got:\n%s", view)
 	}
 }
 

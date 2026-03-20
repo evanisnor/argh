@@ -95,7 +95,7 @@ func (c *CommandBar) SetExecutor(e CommandDispatcher) {
 func NewCommandBar() *CommandBar {
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.Placeholder = "/ or : for commands"
+	ti.Placeholder = "/ or : for commands · ? for help"
 	ti.CharLimit = 256
 	return &CommandBar{
 		histCursor: -1,
@@ -477,7 +477,7 @@ func (c *CommandBar) SuggestionsView() string {
 // are rendered separately via SuggestionsView and overlaid by the root model.
 func (c *CommandBar) View() string {
 	if !c.focused {
-		return "/ or : for commands"
+		return "/ or : for commands · ? for help"
 	}
 
 	var sb strings.Builder

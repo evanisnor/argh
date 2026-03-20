@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -94,7 +95,7 @@ var helpSections = []helpSection{
 // renderHelpContent builds the scrollable help text for the help overlay
 // viewport. It returns a plain formatted string with all sections and rows;
 // the caller is responsible for placing it inside a sized viewport and modal.
-func renderHelpContent(theme Theme) string {
+func renderHelpContent(theme Theme, version, username string) string {
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C0C0FF"))
 	if !theme.Dark {
 		keyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#3030AA"))
@@ -106,6 +107,8 @@ func renderHelpContent(theme Theme) string {
 	var sb strings.Builder
 
 	sb.WriteString(lipgloss.NewStyle().Bold(true).Render("  argh — keyboard reference  "))
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf("  %s  @%s", version, username)))
 	sb.WriteString("\n\n")
 
 	for _, section := range helpSections {
