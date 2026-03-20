@@ -131,6 +131,24 @@ func TestRequestCode_HTTPError(t *testing.T) {
 	}
 }
 
+func TestRequestCode_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"Not Found"}`))
+	}))
+	defer srv.Close()
+
+	client := &GitHubDeviceFlowClient{HTTP: srv.Client(), BaseURL: srv.URL}
+	_, err := client.RequestCode(context.Background(), "bad-client-id", nil)
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	want := "GitHub OAuth app not found"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err.Error(), want)
+	}
+}
+
 func TestRequestCode_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("not json"))

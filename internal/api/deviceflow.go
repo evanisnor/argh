@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -95,6 +96,7 @@ func (c *GitHubDeviceFlowClient) RequestCode(ctx context.Context, clientID strin
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL()+"/login/device/code", strings.NewReader(form.Encode()))
 	if err != nil {
+		slog.Error("device flow: creating request", "error", err)
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -102,21 +104,29 @@ func (c *GitHubDeviceFlowClient) RequestCode(ctx context.Context, clientID strin
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		slog.Error("device flow: requesting device code", "error", err)
 		return nil, fmt.Errorf("requesting device code: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		slog.Error("device flow: reading response", "error", err)
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusNotFound {
+		slog.Error("device flow: OAuth app not found", "status", resp.StatusCode, "body", string(body))
+		return nil, fmt.Errorf("GitHub OAuth app not found — verify oauth.client_id in config")
+	}
 	if resp.StatusCode != http.StatusOK {
+		slog.Error("device flow: unexpected status", "status", resp.StatusCode, "body", string(body))
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var dcr DeviceCodeResponse
 	if err := json.Unmarshal(body, &dcr); err != nil {
+		slog.Error("device flow: decoding response", "error", err)
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
@@ -164,6 +174,7 @@ func (c *GitHubDeviceFlowClient) PollToken(ctx context.Context, clientID string,
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			c.baseURL()+"/login/oauth/access_token", strings.NewReader(form.Encode()))
 		if err != nil {
+			slog.Error("device flow: creating token request", "error", err)
 			return nil, fmt.Errorf("creating request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -171,16 +182,19 @@ func (c *GitHubDeviceFlowClient) PollToken(ctx context.Context, clientID string,
 
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
+			slog.Error("device flow: polling token", "error", err)
 			return nil, fmt.Errorf("polling token: %w", err)
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
+			slog.Error("device flow: reading token response", "error", err)
 			return nil, fmt.Errorf("reading response: %w", err)
 		}
 
 		if resp.StatusCode != http.StatusOK {
+			slog.Error("device flow: unexpected token status", "status", resp.StatusCode, "body", string(body))
 			return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 		}
 
@@ -190,6 +204,7 @@ func (c *GitHubDeviceFlowClient) PollToken(ctx context.Context, clientID string,
 			ErrorDescription string `json:"error_description"`
 		}
 		if err := json.Unmarshal(body, &errResp); err != nil {
+			slog.Error("device flow: decoding token response", "error", err)
 			return nil, fmt.Errorf("decoding response: %w", err)
 		}
 
@@ -198,24 +213,30 @@ func (c *GitHubDeviceFlowClient) PollToken(ctx context.Context, clientID string,
 			// Success — parse the token response.
 			var tr TokenResponse
 			if err := json.Unmarshal(body, &tr); err != nil {
+				slog.Error("device flow: decoding token payload", "error", err)
 				return nil, fmt.Errorf("decoding token response: %w", err)
 			}
 			return &tr, nil
 
 		case "authorization_pending":
+			slog.Debug("device flow: authorization pending, retrying", "interval", interval)
 			continue
 
 		case "slow_down":
 			interval += 5 * time.Second
+			slog.Debug("device flow: slow down requested", "new_interval", interval)
 			continue
 
 		case "expired_token":
+			slog.Error("device flow: device code expired", "error", errResp.Error, "description", errResp.ErrorDescription)
 			return nil, &DeviceFlowError{Code: errResp.Error, Description: errResp.ErrorDescription}
 
 		case "access_denied":
+			slog.Error("device flow: access denied", "error", errResp.Error, "description", errResp.ErrorDescription)
 			return nil, &DeviceFlowError{Code: errResp.Error, Description: errResp.ErrorDescription}
 
 		default:
+			slog.Error("device flow: unexpected error", "error", errResp.Error, "description", errResp.ErrorDescription)
 			return nil, &DeviceFlowError{Code: errResp.Error, Description: errResp.ErrorDescription}
 		}
 	}

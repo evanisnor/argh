@@ -1418,3 +1418,28 @@ tasks:
     testing: >
       Update happyDeps with new fields; test OAuth setup path saves token +
       token type; test SSO transport is wired; all existing tests updated.
+
+  # ─── Phase 17: OAuth Device Flow Fix & Error UX ─────────────────────────────
+
+  - id: 68
+    title: "Replace placeholder OAuth client ID"
+    status: pending
+    depends_on: [64]
+    description: >
+      Replace "Ov23liYOUR_CLIENT_ID" in internal/config/config.go with the real
+      client ID from the registered GitHub OAuth App.
+    testing: >
+      Existing config tests pass unchanged. Manual verification only.
+
+  - id: 69
+    title: "Improve device flow error messages and add debug logging"
+    status: done
+    depends_on: [60]
+    description: >
+      Add a specific 404 check in RequestCode that returns a user-friendly error
+      ("GitHub OAuth app not found — verify oauth.client_id in config"). Add
+      slog.Error calls at error return points in RequestCode and PollToken so
+      failures are captured in the debug log.
+    testing: >
+      Add a 404 table case to deviceflow_test.go that asserts the new error message.
+      Existing tests pass unchanged.
