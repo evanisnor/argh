@@ -142,7 +142,7 @@ func runStatus(
 // sequence can be exercised in tests without real GitHub credentials or disk I/O.
 type tuiDeps struct {
 	authenticate func(ctx context.Context) (*api.Credentials, error)
-	runSetup     func(ctx context.Context) (token string, quit bool, err error)
+	runSetup     func(ctx context.Context) (ui.SetupResult, error)
 	saveToken    func(token string) error
 	deleteToken  func() error
 	loadConfig   func() (config.Config, error)
@@ -169,7 +169,7 @@ func productionDeps() tuiDeps {
 		authenticate: func(ctx context.Context) (*api.Credentials, error) {
 			return api.Authenticate(ctx, config.OSFilesystem{}, &api.GitHubTokenVerifier{})
 		},
-		runSetup: func(ctx context.Context) (string, bool, error) {
+		runSetup: func(ctx context.Context) (ui.SetupResult, error) {
 			return ui.RunSetup(ctx, ui.SetupDeps{
 				Verify:     setupVerify,
 				RunProgram: setupRunProgram,
@@ -252,14 +252,14 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 			needsSetup = true
 		}
 		if needsSetup {
-			token, quit, setupErr := deps.runSetup(ctx)
+			result, setupErr := deps.runSetup(ctx)
 			if setupErr != nil {
 				return fmt.Errorf("setup: %w", setupErr)
 			}
-			if quit {
+			if result.Quit {
 				return nil
 			}
-			if err := deps.saveToken(token); err != nil {
+			if err := deps.saveToken(result.Token); err != nil {
 				return fmt.Errorf("saving token: %w", err)
 			}
 			creds, err = deps.authenticate(ctx)

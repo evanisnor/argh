@@ -1385,7 +1385,7 @@ tasks:
 
   - id: 65
     title: "Redesign setup modal with auth method selection"
-    status: pending
+    status: done
     depends_on: [59, 60, 64]
     description: >
       Refactor setup.go into multi-screen flow: method selection screen,

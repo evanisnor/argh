@@ -17,6 +17,7 @@ import (
 	"github.com/evanisnor/argh/internal/config"
 	"github.com/evanisnor/argh/internal/persistence"
 	"github.com/evanisnor/argh/internal/status"
+	"github.com/evanisnor/argh/internal/ui"
 )
 
 func TestCheckPlatform(t *testing.T) {
@@ -196,8 +197,8 @@ func TestRunTUI_TokenNotFound_SetupSucceeds(t *testing.T) {
 		}
 		return &api.Credentials{Token: "new-token", Login: "testuser"}, nil
 	}
-	deps.runSetup = func(_ context.Context) (string, bool, error) {
-		return "new-token", false, nil
+	deps.runSetup = func(_ context.Context) (ui.SetupResult, error) {
+		return ui.SetupResult{Token: "new-token", TokenType: config.TokenTypePAT}, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -212,8 +213,8 @@ func TestRunTUI_TokenNotFound_SetupQuit(t *testing.T) {
 	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
 		return nil, config.ErrTokenNotFound
 	}
-	deps.runSetup = func(_ context.Context) (string, bool, error) {
-		return "", true, nil
+	deps.runSetup = func(_ context.Context) (ui.SetupResult, error) {
+		return ui.SetupResult{Quit: true}, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -228,8 +229,8 @@ func TestRunTUI_TokenNotFound_SetupError(t *testing.T) {
 	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
 		return nil, config.ErrTokenNotFound
 	}
-	deps.runSetup = func(_ context.Context) (string, bool, error) {
-		return "", false, errors.New("terminal crashed")
+	deps.runSetup = func(_ context.Context) (ui.SetupResult, error) {
+		return ui.SetupResult{}, errors.New("terminal crashed")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -244,8 +245,8 @@ func TestRunTUI_TokenNotFound_SaveError(t *testing.T) {
 	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
 		return nil, config.ErrTokenNotFound
 	}
-	deps.runSetup = func(_ context.Context) (string, bool, error) {
-		return "new-token", false, nil
+	deps.runSetup = func(_ context.Context) (ui.SetupResult, error) {
+		return ui.SetupResult{Token: "new-token", TokenType: config.TokenTypePAT}, nil
 	}
 	deps.saveToken = func(_ string) error {
 		return errors.New("disk full")
@@ -268,8 +269,8 @@ func TestRunTUI_TokenNotFound_ReauthFails(t *testing.T) {
 		}
 		return nil, errors.New("still broken")
 	}
-	deps.runSetup = func(_ context.Context) (string, bool, error) {
-		return "new-token", false, nil
+	deps.runSetup = func(_ context.Context) (ui.SetupResult, error) {
+		return ui.SetupResult{Token: "new-token", TokenType: config.TokenTypePAT}, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -294,8 +295,8 @@ func TestRunTUI_InvalidToken_RepromptsSetup(t *testing.T) {
 		deleteCalled = true
 		return nil
 	}
-	deps.runSetup = func(_ context.Context) (string, bool, error) {
-		return "new-token", false, nil
+	deps.runSetup = func(_ context.Context) (ui.SetupResult, error) {
+		return ui.SetupResult{Token: "new-token", TokenType: config.TokenTypePAT}, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -816,7 +817,7 @@ func TestProductionDeps_RunSetup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// The setup program will fail immediately with a cancelled context.
-	_, _, _ = deps.runSetup(ctx)
+	_, _ = deps.runSetup(ctx)
 }
 
 func TestSetupVerify(t *testing.T) {
