@@ -901,24 +901,46 @@ func TestSetupRunProgram(t *testing.T) {
 	_, _ = setupRunProgram(immediateQuitModel{})
 }
 
+// tempConfigFS returns a config.Filesystem backed by t.TempDir() so tests
+// never touch the real config directory.
+type tempConfigFS struct {
+	config.OSFilesystem
+	dir string
+}
+
+func (f tempConfigFS) UserConfigDir() (string, error) { return f.dir, nil }
+
+func newTempConfigFS(t *testing.T) config.Filesystem {
+	t.Helper()
+	return tempConfigFS{dir: t.TempDir()}
+}
+
 func TestProductionDeps_SaveToken(t *testing.T) {
-	deps := productionDeps()
-	// SaveToken writes to the real config dir; just exercise the closure.
-	_ = deps.saveToken("ghp_test_coverage")
-	// Clean up by deleting the token.
-	_ = deps.deleteToken()
+	fs := newTempConfigFS(t)
+	err := config.SaveToken(fs, "ghp_test_coverage")
+	if err != nil {
+		t.Fatalf("SaveToken: %v", err)
+	}
+	err = config.DeleteToken(fs)
+	if err != nil {
+		t.Fatalf("DeleteToken: %v", err)
+	}
 }
 
 func TestProductionDeps_SaveTokenType(t *testing.T) {
-	deps := productionDeps()
-	// Exercise the closure for coverage.
-	_ = deps.saveTokenType(config.TokenTypePAT)
+	fs := newTempConfigFS(t)
+	err := config.SaveTokenType(fs, config.TokenTypePAT)
+	if err != nil {
+		t.Fatalf("SaveTokenType: %v", err)
+	}
 }
 
 func TestProductionDeps_DeleteToken(t *testing.T) {
-	deps := productionDeps()
-	// Deleting a non-existent token is a no-op.
-	_ = deps.deleteToken()
+	fs := newTempConfigFS(t)
+	err := config.DeleteToken(fs)
+	if err != nil {
+		t.Fatalf("DeleteToken: %v", err)
+	}
 }
 
 func TestProductionDeps_LoadTokenType(t *testing.T) {
