@@ -1488,7 +1488,7 @@ tasks:
 
   - id: 83
     title: "Extract persist+publish into shared helper functions"
-    status: pending
+    status: done
     depends_on: [82]
     description: >
       Extract persist-and-publish logic into package-level functions:

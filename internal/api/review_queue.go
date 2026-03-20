@@ -2,11 +2,8 @@ package api
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
-	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
 	"github.com/shurcooL/githubv4"
 )
@@ -175,76 +172,7 @@ func extractRQCommits(conn rqCommitConnection) []CommitData {
 	return commits
 }
 
-// persistRQPR writes a PR and its associated data to the DB and emits events on changes.
+// persistRQPR delegates to the shared PersistRQPR function.
 func (f *ReviewQueueFetcher) persistRQPR(pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, commits []CommitData) error {
-	existing, err := f.store.GetPullRequest(pr.Repo, pr.Number)
-	isNew := errors.Is(err, sql.ErrNoRows)
-	if err != nil && !isNew {
-		return fmt.Errorf("reading existing PR %s#%d: %w", pr.Repo, pr.Number, err)
-	}
-
-	ciChanged := !isNew && existing.CIState != pr.CIState
-
-	if err := f.store.UpsertPullRequest(pr); err != nil {
-		return fmt.Errorf("upserting PR %s#%d: %w", pr.Repo, pr.Number, err)
-	}
-
-	for _, run := range runs {
-		cr := persistence.CheckRun{
-			PRID:       pr.ID,
-			Name:       run.Name,
-			State:      run.Status,
-			Conclusion: run.Conclusion,
-			URL:        run.URL,
-		}
-		if err := f.store.UpsertCheckRun(cr); err != nil {
-			return fmt.Errorf("upserting check run %s: %w", run.Name, err)
-		}
-	}
-
-	for _, rev := range reviews {
-		r := persistence.Reviewer{
-			PRID:  pr.ID,
-			Login: rev.Login,
-			State: rev.State,
-		}
-		if err := f.store.UpsertReviewer(r); err != nil {
-			return fmt.Errorf("upserting reviewer %s: %w", rev.Login, err)
-		}
-	}
-
-	for _, c := range commits {
-		te := persistence.TimelineEvent{
-			PRID:        pr.ID,
-			EventType:   "commit",
-			Actor:       c.AuthorLogin,
-			CreatedAt:   c.CommittedDate.Time,
-			PayloadJSON: "{}",
-		}
-		if err := f.store.InsertTimelineEvent(te); err != nil {
-			return fmt.Errorf("inserting commit timeline event: %w", err)
-		}
-	}
-
-	if isNew {
-		f.bus.Publish(eventbus.Event{
-			Type:   eventbus.PRUpdated,
-			Before: nil,
-			After:  pr,
-		})
-	} else if ciChanged {
-		f.bus.Publish(eventbus.Event{
-			Type:   eventbus.CIChanged,
-			Before: existing,
-			After:  pr,
-		})
-	} else if !PRsEqual(existing, pr) {
-		f.bus.Publish(eventbus.Event{
-			Type:   eventbus.PRUpdated,
-			Before: existing,
-			After:  pr,
-		})
-	}
-
-	return nil
+	return PersistRQPR(f.store, f.bus, pr, runs, reviews, commits)
 }
