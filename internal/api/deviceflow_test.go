@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -419,4 +420,175 @@ type failTransport struct {
 
 func (f *failTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, f.err
+}
+
+// brokenBodyTransport returns a response with a body whose Read always errors.
+type brokenBodyTransport struct{ statusCode int }
+
+func (b *brokenBodyTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: b.statusCode,
+		Body:       io.NopCloser(&brokenReader{}),
+	}, nil
+}
+
+type brokenReader struct{}
+
+func (brokenReader) Read(_ []byte) (int, error) { return 0, errors.New("read failed") }
+
+// cancelSleeper cancels the context during Sleep.
+type cancelSleeper struct {
+	cancel context.CancelFunc
+}
+
+func (s *cancelSleeper) Sleep(_ time.Duration) { s.cancel() }
+
+// ── Stub coverage tests ───────────────────────────────────────────────────────
+
+func TestFakeTicker_Stop(t *testing.T) {
+	ft := NewFakeTicker(time.Second)
+	ft.Stop() // no-op; just needs to be called
+}
+
+func TestStubDeviceFlowClient_RequestCode(t *testing.T) {
+	stub := &StubDeviceFlowClient{
+		RequestCodeFunc: func(_ context.Context, clientID string, scopes []string) (*DeviceCodeResponse, error) {
+			return &DeviceCodeResponse{UserCode: "STUB"}, nil
+		},
+	}
+	resp, err := stub.RequestCode(context.Background(), "cid", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.UserCode != "STUB" {
+		t.Errorf("UserCode = %q, want STUB", resp.UserCode)
+	}
+}
+
+func TestStubDeviceFlowClient_PollToken(t *testing.T) {
+	stub := &StubDeviceFlowClient{
+		PollTokenFunc: func(_ context.Context, _ string, _ string, _ time.Duration) (*TokenResponse, error) {
+			return &TokenResponse{AccessToken: "tok"}, nil
+		},
+	}
+	resp, err := stub.PollToken(context.Background(), "cid", "dc", time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.AccessToken != "tok" {
+		t.Errorf("AccessToken = %q, want tok", resp.AccessToken)
+	}
+}
+
+// ── Nil sleeper fallback ──────────────────────────────────────────────────────
+
+func TestPollToken_NilSleeper_FallsBackToReal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled so the first ctx.Done() check fires immediately
+
+	client := &GitHubDeviceFlowClient{
+		HTTP:    &http.Client{},
+		BaseURL: "http://localhost",
+		// Sleeper intentionally nil to exercise the fallback path.
+	}
+	_, err := client.PollToken(ctx, "cid", "dc", time.Second)
+	if err == nil {
+		t.Fatal("expected context cancelled error")
+	}
+}
+
+// ── RequestCode error paths ───────────────────────────────────────────────────
+
+func TestRequestCode_BadURL_CreatingRequestFails(t *testing.T) {
+	client := &GitHubDeviceFlowClient{
+		HTTP:    &http.Client{},
+		BaseURL: "://\x7f",
+	}
+	_, err := client.RequestCode(context.Background(), "cid", nil)
+	if err == nil {
+		t.Fatal("expected error for unparseable URL")
+	}
+	if !strings.Contains(err.Error(), "creating request") {
+		t.Errorf("error = %q, want to contain 'creating request'", err.Error())
+	}
+}
+
+func TestRequestCode_ReadBodyError(t *testing.T) {
+	client := &GitHubDeviceFlowClient{
+		HTTP:    &http.Client{Transport: &brokenBodyTransport{statusCode: http.StatusOK}},
+		BaseURL: "http://localhost",
+	}
+	_, err := client.RequestCode(context.Background(), "cid", nil)
+	if err == nil {
+		t.Fatal("expected error for broken body")
+	}
+	if !strings.Contains(err.Error(), "reading response") {
+		t.Errorf("error = %q, want to contain 'reading response'", err.Error())
+	}
+}
+
+// ── PollToken error paths ─────────────────────────────────────────────────────
+
+func TestPollToken_ContextCancelledDuringSleep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &GitHubDeviceFlowClient{
+		HTTP:    &http.Client{},
+		BaseURL: "http://localhost",
+		Sleeper: &cancelSleeper{cancel: cancel},
+	}
+	_, err := client.PollToken(ctx, "cid", "dc", time.Second)
+	if err == nil {
+		t.Fatal("expected context cancelled error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestPollToken_BadURL_CreatingRequestFails(t *testing.T) {
+	client := &GitHubDeviceFlowClient{
+		HTTP:    &http.Client{},
+		BaseURL: "://\x7f",
+		Sleeper: &stubSleeper{},
+	}
+	_, err := client.PollToken(context.Background(), "cid", "dc", time.Second)
+	if err == nil {
+		t.Fatal("expected error for unparseable URL")
+	}
+	if !strings.Contains(err.Error(), "creating request") {
+		t.Errorf("error = %q, want to contain 'creating request'", err.Error())
+	}
+}
+
+func TestPollToken_ReadBodyError(t *testing.T) {
+	client := &GitHubDeviceFlowClient{
+		HTTP:    &http.Client{Transport: &brokenBodyTransport{statusCode: http.StatusOK}},
+		BaseURL: "http://localhost",
+		Sleeper: &stubSleeper{},
+	}
+	_, err := client.PollToken(context.Background(), "cid", "dc", time.Second)
+	if err == nil {
+		t.Fatal("expected error for broken body")
+	}
+	if !strings.Contains(err.Error(), "reading response") {
+		t.Errorf("error = %q, want to contain 'reading response'", err.Error())
+	}
+}
+
+func TestPollToken_TokenDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// No "error" field, so errResp.Error == ""; but access_token is a number,
+		// causing the TokenResponse unmarshal to fail.
+		w.Write([]byte(`{"access_token": 123}`))
+	}))
+	defer srv.Close()
+
+	client := &GitHubDeviceFlowClient{HTTP: srv.Client(), BaseURL: srv.URL, Sleeper: &stubSleeper{}}
+	_, err := client.PollToken(context.Background(), "cid", "dc", time.Second)
+	if err == nil {
+		t.Fatal("expected error for token decode failure")
+	}
+	if !strings.Contains(err.Error(), "decoding token response") {
+		t.Errorf("error = %q, want to contain 'decoding token response'", err.Error())
+	}
 }

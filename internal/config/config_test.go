@@ -441,6 +441,19 @@ func TestLoad_OAuthSection_DefaultClientID(t *testing.T) {
 	}
 }
 
+func TestLoad_EmptyClientID_DefaultReapplied(t *testing.T) {
+	dir := t.TempDir()
+	fs := newFakeFS(dir)
+	fs.writeConfig(dir, "oauth:\n  client_id: \"\"")
+	cfg, err := config.Load(fs)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OAuth.ClientID == "" {
+		t.Error("OAuth.ClientID should be re-defaulted when explicitly set to empty string")
+	}
+}
+
 func TestLoad_OAuthSection_CustomClientID(t *testing.T) {
 	dir := t.TempDir()
 	fs := newFakeFS(dir)
