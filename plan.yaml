@@ -1777,7 +1777,7 @@ tasks:
 
   - id: 106
     title: "Refactor Review Queue panel to use rowBuilder"
-    status: pending
+    status: done
     depends_on: [104]
     description: >
       Replace renderHeader/renderRow in panel_reviews.go with rowBuilder calls.

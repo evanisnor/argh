@@ -13,6 +13,19 @@ import (
 	"github.com/evanisnor/argh/internal/persistence"
 )
 
+// rqColumns defines the column layout for the Review Queue table.
+var rqColumns = []columnDef{
+	{width: 1, align: lipgloss.Right, trailSep: " "}, // SID
+	{width: 2, align: lipgloss.Right},                 // Watch
+	{width: 14, align: lipgloss.Left, trailSep: " │ "}, // Repo
+	{width: 5, align: lipgloss.Left, trailSep: " │ "},  // #
+	{width: 0, align: lipgloss.Left, trailSep: " │ "},  // Title (flex)
+	{width: 12, align: lipgloss.Left, trailSep: " │ "}, // Author
+	{width: 2, align: lipgloss.Left, trailSep: " │ "},  // CI
+	{width: 3, align: lipgloss.Left, trailSep: " │ "},  // Age
+	{width: 3, align: lipgloss.Left},                    // Urgency
+}
+
 // ReviewReader is the data access interface required by the Review Queue panel.
 type ReviewReader interface {
 	ListPullRequests() ([]persistence.PullRequest, error)
@@ -89,24 +102,6 @@ func (p *ReviewQueuePanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 // RowCount returns the number of review queue rows in the panel.
 func (p *ReviewQueuePanel) RowCount() int { return len(p.rows) }
 
-// Column widths for the Review Queue table layout.
-const (
-	rqColSID     = 1
-	rqColSpace   = 1
-	rqColWatch   = 2
-	rqColRepo    = 14
-	rqColNumber  = 5
-	rqColAuthor  = 12
-	rqColCI      = 2
-	rqColAge     = 3
-	rqColUrgency = 3
-	rqColSep     = 3 // " │ "
-	rqNumSeps    = 7
-	rqFixedWidth = rqColSID + rqColSpace + rqColWatch + rqColRepo + rqColNumber +
-		rqColAuthor + rqColCI + rqColAge + rqColUrgency +
-		rqNumSeps*rqColSep
-)
-
 // View renders the panel content.
 func (p *ReviewQueuePanel) View() string {
 	if len(p.rows) == 0 {
@@ -127,20 +122,9 @@ func (p *ReviewQueuePanel) View() string {
 
 // renderHeader builds the column header line for the Review Queue table.
 func (p *ReviewQueuePanel) renderHeader() string {
-	sep := " │ "
-	titleWidth := p.titleWidth()
-	header := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s",
-		rqColSID, "",
-		rqColWatch, "",
-		rqColRepo, "REPO", sep,
-		rqColNumber, "#", sep,
-		titleWidth, "TITLE", sep,
-		rqColAuthor, "@", sep,
-		rqColCI, "⚙", sep,
-		rqColAge, "⏱", sep,
-		rqColUrgency, "!!",
-	)
-	return lipgloss.NewStyle().Faint(true).Render(header)
+	b := &rowBuilder{columns: rqColumns, totalWidth: p.width}
+	cells := []string{"", "", "REPO", "#", "TITLE", "@", "⚙", "⏱", "!!"}
+	return b.buildRow(cells, lipgloss.NewStyle().Faint(true))
 }
 
 // SelectedPR returns the PullRequest currently under the cursor, or nil when
@@ -287,18 +271,6 @@ func urgencyDisplay(score int) string {
 	}
 }
 
-// titleWidth returns the flex title column width based on the panel's allocated width.
-func (p *ReviewQueuePanel) titleWidth() int {
-	if p.width <= 0 {
-		return 40 // generous default before first resize
-	}
-	w := p.width - rqFixedWidth
-	if w < 1 {
-		w = 1
-	}
-	return w
-}
-
 // renderRow formats a single review queue row as a table row with fixed-width columns.
 func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool) string {
 	sid := row.sessionID
@@ -311,27 +283,18 @@ func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool)
 		watchIcon = "👁"
 	}
 
-	sep := " │ "
-	titleWidth := p.titleWidth()
-	title := truncateTitle(row.pr.Title, titleWidth, 0)
-	titleRunes := []rune(title)
-	if len(titleRunes) < titleWidth {
-		title = title + strings.Repeat(" ", titleWidth-len(titleRunes))
+	b := &rowBuilder{columns: rqColumns, totalWidth: p.width}
+	cells := []string{
+		sid,
+		watchIcon,
+		row.pr.Repo,
+		fmt.Sprintf("#%d", row.pr.Number),
+		row.pr.Title,
+		"@" + row.pr.Author,
+		prCIDisplay(row.pr.CIState),
+		formatAge(now.Sub(row.pr.LastActivityAt)),
+		urgencyDisplay(row.urgency),
 	}
-
-	author := "@" + row.pr.Author
-
-	text := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%s%s%-*s%s%-*s%s%-*s%s%-*s",
-		rqColSID, sid,
-		rqColWatch, watchIcon,
-		rqColRepo, truncateTitle(row.pr.Repo, rqColRepo, 0), sep,
-		rqColNumber, fmt.Sprintf("#%d", row.pr.Number), sep,
-		title, sep,
-		rqColAuthor, truncateTitle(author, rqColAuthor, 0), sep,
-		rqColCI, prCIDisplay(row.pr.CIState), sep,
-		rqColAge, formatAge(now.Sub(row.pr.LastActivityAt)), sep,
-		rqColUrgency, urgencyDisplay(row.urgency),
-	)
 
 	style := lipgloss.NewStyle()
 	if row.isLastReviewer {
@@ -346,5 +309,5 @@ func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool)
 	if focused {
 		style = style.Reverse(true)
 	}
-	return style.Render(text)
+	return b.buildRow(cells, style)
 }
