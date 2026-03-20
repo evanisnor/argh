@@ -1667,6 +1667,22 @@ tasks:
     title: "Add poller lifecycle logging"
     status: done
 
+  - id: 100
+    title: "Exclude current user's own PRs from Review Queue panel"
+    status: done
+    depends_on: [18]
+    description: >
+      In ReviewQueuePanel.refresh(), skip PRs where pr.Author matches p.username.
+      The pull_requests table is shared between My PRs and Review Queue panels, so
+      filtering must happen in the UI layer. Add a guard: if p.username != "" &&
+      pr.Author == p.username { continue } at the top of the PR iteration loop.
+    testing: >
+      Table-driven TestReviewQueuePanel_ExcludesOwnPRs with cases:
+      - Excludes PR authored by current user (mix of own + others).
+      - Includes all PRs when none are by current user.
+      - Excludes all PRs when all are by current user (empty panel).
+      - Empty username skips filtering (all PRs shown).
+
   - id: 99
     title: "Fix ghcli fetchers: two-phase fetch (search + pr view)"
     status: done

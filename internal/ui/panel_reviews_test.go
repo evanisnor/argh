@@ -732,6 +732,98 @@ func TestReviewQueuePanel_TitleTruncation(t *testing.T) {
 	}
 }
 
+// TestReviewQueuePanel_ExcludesOwnPRs verifies that PRs authored by the current
+// user are excluded from the review queue display.
+func TestReviewQueuePanel_ExcludesOwnPRs(t *testing.T) {
+	tests := []struct {
+		name       string
+		username   string
+		prs        []persistence.PullRequest
+		wantCount  int
+		wantTitles []string
+		wantAbsent []string
+	}{
+		{
+			name:     "excludes PR authored by current user",
+			username: "alice",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Repo: "repo", Number: 1, Title: "alice PR",
+					Author: "alice", Status: "open", URL: "u1",
+					LastActivityAt: t0, CreatedAt: t0},
+				{ID: "pr2", Repo: "repo", Number: 2, Title: "bob PR",
+					Author: "bob", Status: "open", URL: "u2",
+					LastActivityAt: t0, CreatedAt: t0},
+			},
+			wantCount:  1,
+			wantTitles: []string{"bob PR"},
+			wantAbsent: []string{"alice PR"},
+		},
+		{
+			name:     "includes all PRs when none are by current user",
+			username: "alice",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Repo: "repo", Number: 1, Title: "bob PR",
+					Author: "bob", Status: "open", URL: "u1",
+					LastActivityAt: t0, CreatedAt: t0},
+				{ID: "pr2", Repo: "repo", Number: 2, Title: "charlie PR",
+					Author: "charlie", Status: "open", URL: "u2",
+					LastActivityAt: t0, CreatedAt: t0},
+			},
+			wantCount:  2,
+			wantTitles: []string{"bob PR", "charlie PR"},
+		},
+		{
+			name:     "excludes all PRs when all are by current user",
+			username: "alice",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Repo: "repo", Number: 1, Title: "alice PR 1",
+					Author: "alice", Status: "open", URL: "u1",
+					LastActivityAt: t0, CreatedAt: t0},
+				{ID: "pr2", Repo: "repo", Number: 2, Title: "alice PR 2",
+					Author: "alice", Status: "open", URL: "u2",
+					LastActivityAt: t0, CreatedAt: t0},
+			},
+			wantCount:  0,
+			wantAbsent: []string{"alice PR 1", "alice PR 2"},
+		},
+		{
+			name:     "empty username skips filtering",
+			username: "",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Repo: "repo", Number: 1, Title: "any PR",
+					Author: "anyone", Status: "open", URL: "u1",
+					LastActivityAt: t0, CreatedAt: t0},
+			},
+			wantCount:  1,
+			wantTitles: []string{"any PR"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := newStubPRReader()
+			reader.prs = tt.prs
+			for _, pr := range tt.prs {
+				reader.sessionIDs[pr.URL] = "s"
+			}
+			panel := makeReviewPanel(reader, tt.username)
+			if len(panel.rows) != tt.wantCount {
+				t.Errorf("row count = %d, want %d", len(panel.rows), tt.wantCount)
+			}
+			view := panel.View()
+			for _, title := range tt.wantTitles {
+				if !strings.Contains(view, title) {
+					t.Errorf("expected %q in view; got:\n%s", title, view)
+				}
+			}
+			for _, title := range tt.wantAbsent {
+				if strings.Contains(view, title) {
+					t.Errorf("did not expect %q in view; got:\n%s", title, view)
+				}
+			}
+		})
+	}
+}
+
 // TestReviewQueuePanel_SelectedPR verifies that SelectedPR returns the PR under
 // the cursor or nil when the panel is empty.
 func TestReviewQueuePanel_SelectedPR(t *testing.T) {

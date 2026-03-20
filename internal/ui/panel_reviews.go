@@ -140,6 +140,9 @@ func (p *ReviewQueuePanel) refresh() error {
 	now := p.clock.Now()
 	rows := make([]reviewRow, 0, len(prs))
 	for _, pr := range prs {
+		if p.username != "" && pr.Author == p.username {
+			continue
+		}
 		sid, _ := p.reader.GetSessionID(pr.URL)
 		reviewers, _ := p.reader.ListReviewers(pr.ID)
 
