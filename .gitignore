@@ -1,5 +1,5 @@
 .autoclaude
 **/*.out
 dist
-argh
+/argh
 **/.DS_Store
