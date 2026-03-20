@@ -106,16 +106,20 @@ func Defaults() Config {
 // Filesystem abstracts file I/O for testability.
 type Filesystem interface {
 	ReadFile(path string) ([]byte, error)
+	WriteFile(path string, data []byte, perm os.FileMode) error
 	MkdirAll(path string, perm os.FileMode) error
+	Remove(path string) error
 	UserConfigDir() (string, error)
 }
 
 // OSFilesystem implements Filesystem using the real OS.
 type OSFilesystem struct{}
 
-func (OSFilesystem) ReadFile(path string) ([]byte, error)         { return os.ReadFile(path) }
-func (OSFilesystem) MkdirAll(path string, perm os.FileMode) error { return os.MkdirAll(path, perm) }
-func (OSFilesystem) UserConfigDir() (string, error)               { return os.UserConfigDir() }
+func (OSFilesystem) ReadFile(path string) ([]byte, error)                       { return os.ReadFile(path) }
+func (OSFilesystem) WriteFile(path string, data []byte, perm os.FileMode) error { return os.WriteFile(path, data, perm) }
+func (OSFilesystem) MkdirAll(path string, perm os.FileMode) error               { return os.MkdirAll(path, perm) }
+func (OSFilesystem) Remove(path string) error                                   { return os.Remove(path) }
+func (OSFilesystem) UserConfigDir() (string, error)                             { return os.UserConfigDir() }
 
 // Load reads the config file from the user's config directory, creating the
 // directory if it does not exist. Missing config file → all defaults applied.

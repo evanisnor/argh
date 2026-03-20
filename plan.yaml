@@ -1221,3 +1221,89 @@ tasks:
       commands_test.go: TestParseCommand updated; bare-name and /slash rows
       added. TestExecute tests updated to call Execute with bare names.
       command_bar_test.go: dispatcher assertion updated to expect bare name.
+
+  # ─── Phase 15: Replace gh CLI auth with PAT ─────────────────────────────────
+
+  - id: 52
+    title: "Extend config.Filesystem with WriteFile and Remove"
+    status: done
+    depends_on: [3]
+    description: >
+      Add WriteFile(path string, data []byte, perm os.FileMode) error and
+      Remove(path string) error to the Filesystem interface and OSFilesystem.
+      Update fakeFS in config_test.go. Add tests for the new OSFilesystem methods.
+    testing: >
+      Add WriteFile and Remove methods to fakeFS. Add test for OSFilesystem.WriteFile
+      (write to temp dir, read back). Add test for OSFilesystem.Remove.
+
+  - id: 53
+    title: "Add PAT storage functions to config package"
+    status: pending
+    depends_on: [52]
+    description: >
+      New files: internal/config/token.go and internal/config/token_test.go.
+      Export ConfigDirPath. Add ErrTokenNotFound sentinel. Add LoadToken, SaveToken,
+      DeleteToken functions using the Filesystem interface.
+    testing: >
+      Table-driven tests: token found, not found (ErrTokenNotFound), empty token,
+      save + re-read, save with MkdirAll error, save with WriteFile error,
+      UserConfigDir error, delete token, ConfigDirPath correctness.
+
+  - id: 54
+    title: "Add TokenVerifier and rewrite Authenticate"
+    status: pending
+    depends_on: [53]
+    description: >
+      Full rewrite of internal/api/auth.go. Remove CommandExecutor interface.
+      Add TokenVerifier interface with Verify(ctx, token) (login, error).
+      Add GitHubTokenVerifier using google/go-github oauth2 client.
+      Rewrite Authenticate to use config.LoadToken + verifier.Verify.
+      Update testing.go: remove StubCommandExecutor, add StubTokenVerifier.
+    testing: >
+      Token found + verification succeeds, token not found returns ErrTokenNotFound,
+      token empty, verification fails, verification returns empty login.
+
+  - id: 55
+    title: "Delete CommandExecutor / OSCommandExecutor"
+    status: pending
+    depends_on: [54]
+    description: >
+      Delete internal/api/executor.go and internal/api/executor_test.go.
+      These types are only used by the old Authenticate which is replaced in task 54.
+
+  - id: 56
+    title: "Create the setup modal"
+    status: pending
+    depends_on: [54]
+    description: >
+      New files: internal/ui/setup.go and internal/ui/setup_test.go.
+      Standalone Bubble Tea model that runs before the main TUI. Masked text input
+      for PAT, verify button, quit button. RunSetup top-level function with
+      injected dependencies.
+    testing: >
+      Drive Update directly. Initial state, type chars, press s with chars,
+      verifyResultMsg success/failure, q with empty/non-empty input, esc/ctrl+c,
+      WindowSizeMsg, View renders correctly, RunSetup with stubbed RunProgram.
+
+  - id: 57
+    title: "Wire PAT auth into main.go"
+    status: pending
+    depends_on: [55, 56]
+    description: >
+      Update tuiDeps with runSetup, saveToken, deleteToken fields.
+      Update productionDeps. Rewrite auth flow in runTUI to handle
+      ErrTokenNotFound by showing setup modal, saving token, and re-authenticating.
+      Update main_test.go with new test cases.
+    testing: >
+      TestRunTUI_TokenNotFound_SetupSucceeds, SetupQuit, SetupError, SaveError,
+      ReauthFails, InvalidToken_RepromptsSetup. Update existing deps tests.
+
+  - id: 58
+    title: "Remove gh dependency from Brewfile and docs"
+    status: pending
+    depends_on: [57]
+    description: >
+      Remove brew "gh" from Brewfile. Update CLAUDE.md runtime dependencies
+      section. Update ARCHITECTURE.md auth references.
+    testing: >
+      No unit tests. Verify no references to gh CLI remain in Go source.

@@ -24,6 +24,8 @@ type fakeFS struct {
 	mkdirErr  error
 	configErr error
 	readErr   error
+	writeErr  error
+	removeErr error
 }
 
 func newFakeFS(configDir string) *fakeFS {
@@ -44,6 +46,22 @@ func (f *fakeFS) ReadFile(path string) ([]byte, error) {
 		return nil, os.ErrNotExist
 	}
 	return data, nil
+}
+
+func (f *fakeFS) WriteFile(path string, data []byte, _ os.FileMode) error {
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	f.files[path] = data
+	return nil
+}
+
+func (f *fakeFS) Remove(path string) error {
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	delete(f.files, path)
+	return nil
 }
 
 func (f *fakeFS) MkdirAll(path string, _ os.FileMode) error {
@@ -348,6 +366,43 @@ func TestOSFilesystem_MkdirAllAndReadFile(t *testing.T) {
 	_, err = fs.ReadFile(filepath.Join(subdir, "missing.txt"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("ReadFile missing: got %v, want ErrNotExist", err)
+	}
+}
+
+func TestOSFilesystem_WriteFile(t *testing.T) {
+	dir := t.TempDir()
+	fs := config.OSFilesystem{}
+	filePath := filepath.Join(dir, "written.txt")
+
+	if err := fs.WriteFile(filePath, []byte("hello write"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	data, err := fs.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile after WriteFile: %v", err)
+	}
+	if string(data) != "hello write" {
+		t.Errorf("ReadFile: got %q, want %q", string(data), "hello write")
+	}
+}
+
+func TestOSFilesystem_Remove(t *testing.T) {
+	dir := t.TempDir()
+	fs := config.OSFilesystem{}
+	filePath := filepath.Join(dir, "removeme.txt")
+
+	if err := os.WriteFile(filePath, []byte("temp"), 0o644); err != nil {
+		t.Fatalf("setup WriteFile: %v", err)
+	}
+
+	if err := fs.Remove(filePath); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	_, err := fs.ReadFile(filePath)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ReadFile after Remove: got %v, want ErrNotExist", err)
 	}
 }
 
