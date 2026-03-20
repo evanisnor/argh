@@ -1273,7 +1273,7 @@ tasks:
 
   - id: 56
     title: "Create the setup modal"
-    status: pending
+    status: done
     depends_on: [54]
     description: >
       New files: internal/ui/setup.go and internal/ui/setup_test.go.
