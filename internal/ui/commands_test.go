@@ -248,11 +248,19 @@ func TestParseCommand(t *testing.T) {
 		wantCmd  string
 		wantArgs []string
 	}{
-		{":approve a", ":approve", []string{"a"}},
-		{":merge #42", ":merge", []string{"#42"}},
-		{":request a @alice @bob", ":request", []string{"a", "@alice", "@bob"}},
-		{":reload", ":reload", nil},
-		{" :quit ", ":quit", nil},
+		// colon-prefixed inputs — colon is stripped
+		{":approve a", "approve", []string{"a"}},
+		{":merge #42", "merge", []string{"#42"}},
+		{":request a @alice @bob", "request", []string{"a", "@alice", "@bob"}},
+		{":reload", "reload", nil},
+		{" :quit ", "quit", nil},
+		// slash-prefixed inputs — slash is stripped
+		{"/approve a", "approve", []string{"a"}},
+		{"/reload", "reload", nil},
+		// bare names (no prefix) — passed through unchanged
+		{"approve a", "approve", []string{"a"}},
+		{"reload", "reload", nil},
+		// empty input
 		{"", "", nil},
 	}
 	for _, tt := range tests {
@@ -338,7 +346,7 @@ func TestResolvePR_NilStore(t *testing.T) {
 
 func TestExecute_Quit(t *testing.T) {
 	exec := newExec(&fakePRMutator{}, &fakePRStore{})
-	for _, cmd := range []string{":quit", "q"} {
+	for _, cmd := range []string{"quit", "q"} {
 		t.Run(cmd, func(t *testing.T) {
 			teaCmd := exec.Execute(cmd, nil)
 			if teaCmd == nil {
@@ -358,7 +366,7 @@ func TestExecute_Quit(t *testing.T) {
 func TestExecute_Reload(t *testing.T) {
 	poll := &fakePollTrigger{}
 	exec := NewCommandExecutor(CommandExecutorConfig{Poll: poll, Store: &fakePRStore{}})
-	teaCmd := exec.Execute(":reload", nil)
+	teaCmd := exec.Execute("reload", nil)
 	msg := runCmd(t, teaCmd)
 	if _, ok := msg.(ForceReloadMsg); !ok {
 		t.Errorf("expected ForceReloadMsg, got %T", msg)
@@ -370,7 +378,7 @@ func TestExecute_Reload(t *testing.T) {
 
 func TestExecute_Reload_NilPoll(t *testing.T) {
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: &fakePRStore{}})
-	teaCmd := exec.Execute(":reload", nil)
+	teaCmd := exec.Execute("reload", nil)
 	msg := runCmd(t, teaCmd)
 	// Should still return ForceReloadMsg even with nil PollTrigger.
 	if _, ok := msg.(ForceReloadMsg); !ok {
@@ -383,7 +391,7 @@ func TestExecute_Reload_NilPoll(t *testing.T) {
 func TestExecute_Wake(t *testing.T) {
 	dnd := &fakeDNDController{}
 	exec := NewCommandExecutor(CommandExecutorConfig{DND: dnd, Store: &fakePRStore{}})
-	msg := runCmd(t, exec.Execute(":wake", nil))
+	msg := runCmd(t, exec.Execute("wake", nil))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -399,7 +407,7 @@ func TestExecute_Wake(t *testing.T) {
 func TestExecute_Wake_Error(t *testing.T) {
 	dnd := &fakeDNDController{wakeErr: errors.New("wake failed")}
 	exec := NewCommandExecutor(CommandExecutorConfig{DND: dnd, Store: &fakePRStore{}})
-	msg := runCmd(t, exec.Execute(":wake", nil))
+	msg := runCmd(t, exec.Execute("wake", nil))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from Wake")
@@ -408,7 +416,7 @@ func TestExecute_Wake_Error(t *testing.T) {
 
 func TestExecute_Wake_NilDND(t *testing.T) {
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: &fakePRStore{}})
-	msg := runCmd(t, exec.Execute(":wake", nil))
+	msg := runCmd(t, exec.Execute("wake", nil))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -435,7 +443,7 @@ func TestExecute_DND(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dnd := &fakeDNDController{}
 			exec := NewCommandExecutor(CommandExecutorConfig{DND: dnd, Store: &fakePRStore{}})
-			msg := runCmd(t, exec.Execute(":dnd", tt.args))
+			msg := runCmd(t, exec.Execute("dnd", tt.args))
 			r, ok := msg.(CommandResultMsg)
 			if !ok {
 				t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -459,7 +467,7 @@ func TestExecute_DND(t *testing.T) {
 func TestExecute_DND_Error(t *testing.T) {
 	dnd := &fakeDNDController{setDNDErr: errors.New("dnd failed")}
 	exec := NewCommandExecutor(CommandExecutorConfig{DND: dnd, Store: &fakePRStore{}})
-	msg := runCmd(t, exec.Execute(":dnd", nil))
+	msg := runCmd(t, exec.Execute("dnd", nil))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from SetDND")
@@ -468,7 +476,7 @@ func TestExecute_DND_Error(t *testing.T) {
 
 func TestExecute_DND_NilDND(t *testing.T) {
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: &fakePRStore{}})
-	msg := runCmd(t, exec.Execute(":dnd", nil))
+	msg := runCmd(t, exec.Execute("dnd", nil))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -482,7 +490,7 @@ func TestExecute_DND_NilDND(t *testing.T) {
 
 func TestExecute_Help(t *testing.T) {
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: &fakePRStore{}})
-	msg := runCmd(t, exec.Execute(":help", nil))
+	msg := runCmd(t, exec.Execute("help", nil))
 	if _, ok := msg.(ShowHelpMsg); !ok {
 		t.Fatalf("expected ShowHelpMsg, got %T", msg)
 	}
@@ -494,7 +502,7 @@ func TestExecute_Open(t *testing.T) {
 	browser := &fakeBrowserOpener{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Browser: browser, Store: store})
-	msg := runCmd(t, exec.Execute(":open", []string{"a"}))
+	msg := runCmd(t, exec.Execute("open", []string{"a"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -511,7 +519,7 @@ func TestExecute_Open_BrowserError(t *testing.T) {
 	browser := &fakeBrowserOpener{openErr: errors.New("cannot open")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Browser: browser, Store: store})
-	msg := runCmd(t, exec.Execute(":open", []string{"a"}))
+	msg := runCmd(t, exec.Execute("open", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from browser.Open")
@@ -521,7 +529,7 @@ func TestExecute_Open_BrowserError(t *testing.T) {
 func TestExecute_Open_NilBrowser(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":open", []string{"a"}))
+	msg := runCmd(t, exec.Execute("open", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when browser is nil")
@@ -531,7 +539,7 @@ func TestExecute_Open_NilBrowser(t *testing.T) {
 func TestExecute_Open_PRNotFound(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Browser: &fakeBrowserOpener{}, Store: store})
-	msg := runCmd(t, exec.Execute(":open", []string{"z"}))
+	msg := runCmd(t, exec.Execute("open", []string{"z"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error for unknown PR ref")
@@ -544,7 +552,7 @@ func TestExecute_Diff(t *testing.T) {
 	diff := &fakeDiffViewer{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Diff: diff, Store: store})
-	msg := runCmd(t, exec.Execute(":diff", []string{"a"}))
+	msg := runCmd(t, exec.Execute("diff", []string{"a"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -561,7 +569,7 @@ func TestExecute_Diff_Error(t *testing.T) {
 	diff := &fakeDiffViewer{showErr: errors.New("delta not found")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Diff: diff, Store: store})
-	msg := runCmd(t, exec.Execute(":diff", []string{"a"}))
+	msg := runCmd(t, exec.Execute("diff", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from ShowDiff")
@@ -571,7 +579,7 @@ func TestExecute_Diff_Error(t *testing.T) {
 func TestExecute_Diff_NilDiffViewer(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":diff", []string{"a"}))
+	msg := runCmd(t, exec.Execute("diff", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when diff viewer is nil")
@@ -584,7 +592,7 @@ func TestExecute_Approve(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":approve", []string{"a"}))
+	msg := runCmd(t, exec.Execute("approve", []string{"a"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -601,7 +609,7 @@ func TestExecute_Approve_MutatorError(t *testing.T) {
 	mut := &fakePRMutator{approveErr: errors.New("forbidden")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":approve", []string{"a"}))
+	msg := runCmd(t, exec.Execute("approve", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from Approve")
@@ -611,7 +619,7 @@ func TestExecute_Approve_MutatorError(t *testing.T) {
 func TestExecute_Approve_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":approve", []string{"a"}))
+	msg := runCmd(t, exec.Execute("approve", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -624,7 +632,7 @@ func TestExecute_Merge(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":merge", []string{"#42"}))
+	msg := runCmd(t, exec.Execute("merge", []string{"#42"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -641,7 +649,7 @@ func TestExecute_Merge_Error(t *testing.T) {
 	mut := &fakePRMutator{mergePRErr: errors.New("conflict")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":merge", []string{"a"}))
+	msg := runCmd(t, exec.Execute("merge", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from MergePR")
@@ -651,7 +659,7 @@ func TestExecute_Merge_Error(t *testing.T) {
 func TestExecute_Merge_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":merge", []string{"a"}))
+	msg := runCmd(t, exec.Execute("merge", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -664,7 +672,7 @@ func TestExecute_Close(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":close", []string{"b"}))
+	msg := runCmd(t, exec.Execute("close", []string{"b"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -681,7 +689,7 @@ func TestExecute_Close_Error(t *testing.T) {
 	mut := &fakePRMutator{closePRErr: errors.New("already closed")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":close", []string{"a"}))
+	msg := runCmd(t, exec.Execute("close", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from ClosePR")
@@ -691,7 +699,7 @@ func TestExecute_Close_Error(t *testing.T) {
 func TestExecute_Close_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":close", []string{"a"}))
+	msg := runCmd(t, exec.Execute("close", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -704,7 +712,7 @@ func TestExecute_Reopen(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":reopen", []string{"a"}))
+	msg := runCmd(t, exec.Execute("reopen", []string{"a"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -721,7 +729,7 @@ func TestExecute_Reopen_Error(t *testing.T) {
 	mut := &fakePRMutator{reopenPRErr: errors.New("not found")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":reopen", []string{"a"}))
+	msg := runCmd(t, exec.Execute("reopen", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from ReopenPR")
@@ -731,7 +739,7 @@ func TestExecute_Reopen_Error(t *testing.T) {
 func TestExecute_Reopen_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":reopen", []string{"a"}))
+	msg := runCmd(t, exec.Execute("reopen", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -744,7 +752,7 @@ func TestExecute_Ready(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":ready", []string{"a"}))
+	msg := runCmd(t, exec.Execute("ready", []string{"a"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -761,7 +769,7 @@ func TestExecute_Ready_Error(t *testing.T) {
 	mut := &fakePRMutator{markReadyErr: errors.New("gql error")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":ready", []string{"a"}))
+	msg := runCmd(t, exec.Execute("ready", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from MarkReadyForReview")
@@ -771,7 +779,7 @@ func TestExecute_Ready_Error(t *testing.T) {
 func TestExecute_Ready_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":ready", []string{"a"}))
+	msg := runCmd(t, exec.Execute("ready", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -784,7 +792,7 @@ func TestExecute_Draft(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":draft", []string{"a"}))
+	msg := runCmd(t, exec.Execute("draft", []string{"a"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -801,7 +809,7 @@ func TestExecute_Draft_Error(t *testing.T) {
 	mut := &fakePRMutator{convertToDraftErr: errors.New("gql error")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":draft", []string{"a"}))
+	msg := runCmd(t, exec.Execute("draft", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from ConvertToDraft")
@@ -811,7 +819,7 @@ func TestExecute_Draft_Error(t *testing.T) {
 func TestExecute_Draft_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":draft", []string{"a"}))
+	msg := runCmd(t, exec.Execute("draft", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -824,7 +832,7 @@ func TestExecute_Request(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":request", []string{"a", "@alice", "@bob"}))
+	msg := runCmd(t, exec.Execute("request", []string{"a", "@alice", "@bob"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -842,7 +850,7 @@ func TestExecute_Request(t *testing.T) {
 
 func TestExecute_Request_NoArgs(t *testing.T) {
 	exec := newExec(&fakePRMutator{}, &fakePRStore{})
-	msg := runCmd(t, exec.Execute(":request", nil))
+	msg := runCmd(t, exec.Execute("request", nil))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when no args given")
@@ -852,7 +860,7 @@ func TestExecute_Request_NoArgs(t *testing.T) {
 func TestExecute_Request_NoReviewers(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":request", []string{"a"}))
+	msg := runCmd(t, exec.Execute("request", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when no reviewers specified")
@@ -862,7 +870,7 @@ func TestExecute_Request_NoReviewers(t *testing.T) {
 func TestExecute_Request_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":request", []string{"a", "@alice"}))
+	msg := runCmd(t, exec.Execute("request", []string{"a", "@alice"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -873,7 +881,7 @@ func TestExecute_Request_Error(t *testing.T) {
 	mut := &fakePRMutator{requestReviewErr: errors.New("no such user")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":request", []string{"a", "@alice"}))
+	msg := runCmd(t, exec.Execute("request", []string{"a", "@alice"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from RequestReview")
@@ -883,7 +891,7 @@ func TestExecute_Request_Error(t *testing.T) {
 func TestExecute_Request_PRNotFound(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":request", []string{"z", "@alice"}))
+	msg := runCmd(t, exec.Execute("request", []string{"z", "@alice"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error for unknown PR ref")
@@ -908,7 +916,7 @@ func TestExecute_Request_WithSuggester_ReturnsSuggestions(t *testing.T) {
 		Store:     store,
 		Suggester: suggester,
 	})
-	msg := runCmd(t, exec.Execute(":request", []string{"a"}))
+	msg := runCmd(t, exec.Execute("request", []string{"a"}))
 	r, ok := msg.(ReviewSuggestionsMsg)
 	if !ok {
 		t.Fatalf("expected ReviewSuggestionsMsg, got %T: %v", msg, msg)
@@ -933,7 +941,7 @@ func TestExecute_Request_WithSuggester_UsesNumberWhenNoSessionID(t *testing.T) {
 		Store:     store,
 		Suggester: suggester,
 	})
-	msg := runCmd(t, exec.Execute(":request", []string{"42"}))
+	msg := runCmd(t, exec.Execute("request", []string{"42"}))
 	r, ok := msg.(ReviewSuggestionsMsg)
 	if !ok {
 		t.Fatalf("expected ReviewSuggestionsMsg, got %T: %v", msg, msg)
@@ -951,7 +959,7 @@ func TestExecute_Request_WithSuggester_Error(t *testing.T) {
 		Store:     store,
 		Suggester: suggester,
 	})
-	msg := runCmd(t, exec.Execute(":request", []string{"a"}))
+	msg := runCmd(t, exec.Execute("request", []string{"a"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -967,7 +975,7 @@ func TestExecute_Label_Add(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":label", []string{"a", "bug"}))
+	msg := runCmd(t, exec.Execute("label", []string{"a", "bug"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -987,7 +995,7 @@ func TestExecute_Label_Remove(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":label", []string{"a", "-bug"}))
+	msg := runCmd(t, exec.Execute("label", []string{"a", "-bug"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -1006,7 +1014,7 @@ func TestExecute_Label_Remove(t *testing.T) {
 func TestExecute_Label_TooFewArgs(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":label", []string{"a"}))
+	msg := runCmd(t, exec.Execute("label", []string{"a"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when label is missing")
@@ -1016,7 +1024,7 @@ func TestExecute_Label_TooFewArgs(t *testing.T) {
 func TestExecute_Label_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":label", []string{"a", "bug"}))
+	msg := runCmd(t, exec.Execute("label", []string{"a", "bug"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when mutator is nil")
@@ -1027,7 +1035,7 @@ func TestExecute_Label_AddError(t *testing.T) {
 	mut := &fakePRMutator{addLabelErr: errors.New("label error")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":label", []string{"a", "bug"}))
+	msg := runCmd(t, exec.Execute("label", []string{"a", "bug"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from AddLabel")
@@ -1038,7 +1046,7 @@ func TestExecute_Label_RemoveError(t *testing.T) {
 	mut := &fakePRMutator{removeLabelErr: errors.New("label error")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":label", []string{"a", "-bug"}))
+	msg := runCmd(t, exec.Execute("label", []string{"a", "-bug"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from RemoveLabel")
@@ -1048,7 +1056,7 @@ func TestExecute_Label_RemoveError(t *testing.T) {
 func TestExecute_Label_PRNotFound(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":label", []string{"z", "bug"}))
+	msg := runCmd(t, exec.Execute("label", []string{"z", "bug"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error for unknown PR ref")
@@ -1060,7 +1068,7 @@ func TestExecute_Label_PRNotFound(t *testing.T) {
 func TestExecute_Comment_ReturnsComposeMsg(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":comment", []string{"a"}))
+	msg := runCmd(t, exec.Execute("comment", []string{"a"}))
 	compose, ok := msg.(CommandComposeMsg)
 	if !ok {
 		t.Fatalf("expected CommandComposeMsg, got %T", msg)
@@ -1077,7 +1085,7 @@ func TestExecute_Comment_OnSubmit_Success(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":comment", []string{"a"}))
+	msg := runCmd(t, exec.Execute("comment", []string{"a"}))
 	compose := msg.(CommandComposeMsg)
 	result := runCmd(t, compose.OnSubmit("hello world"))
 	r, ok := result.(CommandResultMsg)
@@ -1096,7 +1104,7 @@ func TestExecute_Comment_OnSubmit_MutatorError(t *testing.T) {
 	mut := &fakePRMutator{postCommentErr: errors.New("comment failed")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":comment", []string{"a"}))
+	msg := runCmd(t, exec.Execute("comment", []string{"a"}))
 	compose := msg.(CommandComposeMsg)
 	result := runCmd(t, compose.OnSubmit("hello"))
 	r := result.(CommandResultMsg)
@@ -1108,7 +1116,7 @@ func TestExecute_Comment_OnSubmit_MutatorError(t *testing.T) {
 func TestExecute_Comment_OnSubmit_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":comment", []string{"a"}))
+	msg := runCmd(t, exec.Execute("comment", []string{"a"}))
 	compose := msg.(CommandComposeMsg)
 	result := runCmd(t, compose.OnSubmit("hello"))
 	r := result.(CommandResultMsg)
@@ -1120,7 +1128,7 @@ func TestExecute_Comment_OnSubmit_NilMutator(t *testing.T) {
 func TestExecute_Comment_PRNotFound(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":comment", []string{"z"}))
+	msg := runCmd(t, exec.Execute("comment", []string{"z"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg (error), got %T", msg)
@@ -1135,7 +1143,7 @@ func TestExecute_Comment_PRNotFound(t *testing.T) {
 func TestExecute_Review_ReturnsComposeMsg(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":review", []string{"a"}))
+	msg := runCmd(t, exec.Execute("review", []string{"a"}))
 	compose, ok := msg.(CommandComposeMsg)
 	if !ok {
 		t.Fatalf("expected CommandComposeMsg, got %T", msg)
@@ -1149,7 +1157,7 @@ func TestExecute_Review_OnSubmit_Success(t *testing.T) {
 	mut := &fakePRMutator{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":review", []string{"a"}))
+	msg := runCmd(t, exec.Execute("review", []string{"a"}))
 	compose := msg.(CommandComposeMsg)
 	result := runCmd(t, compose.OnSubmit("LGTM"))
 	r, ok := result.(CommandResultMsg)
@@ -1165,7 +1173,7 @@ func TestExecute_Review_OnSubmit_MutatorError(t *testing.T) {
 	mut := &fakePRMutator{postCommentErr: errors.New("review failed")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(mut, store)
-	msg := runCmd(t, exec.Execute(":review", []string{"a"}))
+	msg := runCmd(t, exec.Execute("review", []string{"a"}))
 	compose := msg.(CommandComposeMsg)
 	result := runCmd(t, compose.OnSubmit("LGTM"))
 	r := result.(CommandResultMsg)
@@ -1177,7 +1185,7 @@ func TestExecute_Review_OnSubmit_MutatorError(t *testing.T) {
 func TestExecute_Review_OnSubmit_NilMutator(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":review", []string{"a"}))
+	msg := runCmd(t, exec.Execute("review", []string{"a"}))
 	compose := msg.(CommandComposeMsg)
 	result := runCmd(t, compose.OnSubmit("LGTM"))
 	r := result.(CommandResultMsg)
@@ -1189,7 +1197,7 @@ func TestExecute_Review_OnSubmit_NilMutator(t *testing.T) {
 func TestExecute_Review_PRNotFound(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := newExec(&fakePRMutator{}, store)
-	msg := runCmd(t, exec.Execute(":review", []string{"z"}))
+	msg := runCmd(t, exec.Execute("review", []string{"z"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg (error), got %T", msg)
@@ -1205,7 +1213,7 @@ func TestExecute_Watch(t *testing.T) {
 	we := &fakeWatchEngine{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"a", "on:ci-pass", "merge"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ci-pass", "merge"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -1222,7 +1230,7 @@ func TestExecute_Watch_TooFewArgs(t *testing.T) {
 	we := &fakeWatchEngine{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"a", "on:ci"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ci"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when watch args are insufficient")
@@ -1232,7 +1240,7 @@ func TestExecute_Watch_TooFewArgs(t *testing.T) {
 func TestExecute_Watch_NilEngine(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"a", "on:ci-pass", "merge"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ci-pass", "merge"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when watch engine is nil")
@@ -1243,7 +1251,7 @@ func TestExecute_Watch_NoArgs(t *testing.T) {
 	we := &fakeWatchEngine{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", nil))
+	msg := runCmd(t, exec.Execute("watch", nil))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when no args given")
@@ -1254,7 +1262,7 @@ func TestExecute_Watch_Error(t *testing.T) {
 	we := &fakeWatchEngine{addWatchErr: errors.New("watch error")}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"a", "on:ci-pass", "merge"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ci-pass", "merge"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from AddWatch")
@@ -1265,7 +1273,7 @@ func TestExecute_Watch_PRNotFound(t *testing.T) {
 	we := &fakeWatchEngine{}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"z", "on:ci-pass", "merge"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"z", "on:ci-pass", "merge"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error for unknown PR ref")
@@ -1278,7 +1286,7 @@ func TestExecute_WatchList_NoWatches(t *testing.T) {
 	we := &fakeWatchEngine{watches: nil}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"list"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"list"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -1300,7 +1308,7 @@ func TestExecute_WatchList_WithWatches(t *testing.T) {
 	}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"list"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"list"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -1317,7 +1325,7 @@ func TestExecute_WatchList_Error(t *testing.T) {
 	we := &fakeWatchEngine{listWatchesErr: errors.New("db error")}
 	store := &fakePRStore{}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"list"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"list"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from ListWatches")
@@ -1330,7 +1338,7 @@ func TestExecute_WatchCancel_Success(t *testing.T) {
 	we := &fakeWatchEngine{}
 	store := &fakePRStore{}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"cancel", "w42"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"cancel", "w42"}))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)
@@ -1350,7 +1358,7 @@ func TestExecute_WatchCancel_NoID(t *testing.T) {
 	we := &fakeWatchEngine{}
 	store := &fakePRStore{}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"cancel"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"cancel"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error when cancel ID is missing")
@@ -1361,7 +1369,7 @@ func TestExecute_WatchCancel_Error(t *testing.T) {
 	we := &fakeWatchEngine{cancelWatchErr: errors.New("cancel failed")}
 	store := &fakePRStore{}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
-	msg := runCmd(t, exec.Execute(":watch", []string{"cancel", "w1"}))
+	msg := runCmd(t, exec.Execute("watch", []string{"cancel", "w1"}))
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from CancelWatch")
@@ -1372,7 +1380,7 @@ func TestExecute_WatchCancel_Error(t *testing.T) {
 
 func TestExecute_UnknownCommand(t *testing.T) {
 	exec := newExec(&fakePRMutator{}, &fakePRStore{})
-	msg := runCmd(t, exec.Execute(":notacommand", nil))
+	msg := runCmd(t, exec.Execute("notacommand", nil))
 	r, ok := msg.(CommandResultMsg)
 	if !ok {
 		t.Fatalf("expected CommandResultMsg, got %T", msg)

@@ -145,10 +145,10 @@ func NewCommandExecutor(cfg CommandExecutorConfig) *CommandExecutor {
 // tea.QuitMsg, or ForceReloadMsg.
 func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 	switch cmd {
-	case ":quit", "q":
+	case "quit", "q":
 		return tea.Quit
 
-	case ":reload":
+	case "reload":
 		return func() tea.Msg {
 			if e.poll != nil {
 				e.poll.ForcePoll()
@@ -156,7 +156,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return ForceReloadMsg{}
 		}
 
-	case ":wake":
+	case "wake":
 		return func() tea.Msg {
 			if e.dnd == nil {
 				return CommandResultMsg{Status: ":wake: no DND controller"}
@@ -167,15 +167,15 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: "polling resumed"}
 		}
 
-	case ":dnd":
+	case "dnd":
 		return e.execDND(args)
 
-	case ":help":
+	case "help":
 		return func() tea.Msg {
 			return ShowHelpMsg{}
 		}
 
-	case ":open":
+	case "open":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.browser == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":open: no browser opener configured")}
@@ -186,7 +186,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("opened %s", pr.URL)}
 		})
 
-	case ":diff":
+	case "diff":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.diff == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":diff: no diff viewer configured")}
@@ -197,7 +197,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("diff %s#%d", pr.Repo, pr.Number)}
 		})
 
-	case ":approve":
+	case "approve":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.mutator == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":approve: no mutator configured")}
@@ -208,7 +208,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("approved %s#%d", pr.Repo, pr.Number)}
 		})
 
-	case ":merge":
+	case "merge":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.mutator == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":merge: no mutator configured")}
@@ -219,7 +219,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("merged %s#%d", pr.Repo, pr.Number)}
 		})
 
-	case ":close":
+	case "close":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.mutator == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":close: no mutator configured")}
@@ -230,7 +230,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("closed %s#%d", pr.Repo, pr.Number)}
 		})
 
-	case ":reopen":
+	case "reopen":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.mutator == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":reopen: no mutator configured")}
@@ -241,7 +241,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("reopened %s#%d", pr.Repo, pr.Number)}
 		})
 
-	case ":ready":
+	case "ready":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.mutator == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":ready: no mutator configured")}
@@ -252,7 +252,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("marked ready %s#%d", pr.Repo, pr.Number)}
 		})
 
-	case ":draft":
+	case "draft":
 		return e.execWithPR(args, func(pr persistence.PullRequest) tea.Msg {
 			if e.mutator == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":draft: no mutator configured")}
@@ -263,13 +263,13 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			return CommandResultMsg{Status: fmt.Sprintf("converted to draft %s#%d", pr.Repo, pr.Number)}
 		})
 
-	case ":request":
+	case "request":
 		return e.execRequest(args)
 
-	case ":label":
+	case "label":
 		return e.execLabel(args)
 
-	case ":comment":
+	case "comment":
 		return e.execCompose(args, ":comment", func(pr persistence.PullRequest, body string) tea.Cmd {
 			return func() tea.Msg {
 				if e.mutator == nil {
@@ -282,7 +282,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			}
 		})
 
-	case ":review":
+	case "review":
 		return e.execCompose(args, ":review", func(pr persistence.PullRequest, body string) tea.Cmd {
 			return func() tea.Msg {
 				if e.mutator == nil {
@@ -295,7 +295,7 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			}
 		})
 
-	case ":watch":
+	case "watch":
 		return e.execWatch(args)
 
 	default:
@@ -563,13 +563,18 @@ func (e *CommandExecutor) execWatch(args []string) tea.Cmd {
 // ── Parsing helper ────────────────────────────────────────────────────────────
 
 // ParseCommand splits a raw command-bar input string (e.g. ":approve a") into
-// the command name and its arguments.
+// the command name and its arguments. Any leading ":" or "/" is stripped from
+// the command name so that ":help", "/help", and "help" all dispatch identically.
 func ParseCommand(input string) (cmd string, args []string) {
 	parts := strings.Fields(strings.TrimSpace(input))
 	if len(parts) == 0 {
 		return "", nil
 	}
-	return parts[0], parts[1:]
+	name := parts[0]
+	if strings.HasPrefix(name, ":") || strings.HasPrefix(name, "/") {
+		name = name[1:]
+	}
+	return name, parts[1:]
 }
 
 // firstArg returns the first argument or an empty string when args is empty.

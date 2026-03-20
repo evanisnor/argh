@@ -922,8 +922,8 @@ func TestCommandBar_SetExecutor_DispatchesOnEnter(t *testing.T) {
 	if !disp.called {
 		t.Fatal("expected executor.Execute to be called")
 	}
-	if disp.cmd != ":reload" {
-		t.Errorf("cmd: got %q, want %q", disp.cmd, ":reload")
+	if disp.cmd != "reload" {
+		t.Errorf("cmd: got %q, want %q", disp.cmd, "reload")
 	}
 }
 

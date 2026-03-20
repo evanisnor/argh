@@ -1206,3 +1206,18 @@ tasks:
       modal dimensions respect terminal size; overlay uses overlayModal
       (content appears centred, not below normal layout). Retain all existing
       content-assertion tests. 100% coverage maintained.
+
+  - id: 51
+    title: "Fix: unknown command error when entering commands via : or /"
+    status: done
+    description: >
+      ParseCommand now strips any leading ":" or "/" from the parsed command
+      name before dispatching. Execute switch cases updated to bare names
+      (e.g. "quit", "reload", "help"). Suggestions and help modal display
+      are unaffected — commandList names retain their ":" prefix.
+    implementation: >
+      commands.go: ParseCommand strips leading ":" or "/" from parts[0].
+      Execute: all case labels changed from ":cmd" to "cmd".
+      commands_test.go: TestParseCommand updated; bare-name and /slash rows
+      added. TestExecute tests updated to call Execute with bare names.
+      command_bar_test.go: dispatcher assertion updated to expect bare name.
