@@ -560,8 +560,11 @@ func TestSetup_DeviceFlow_RequestCodeSuccess(t *testing.T) {
 	updated, cmd = m.Update(result)
 	m = updated.(SetupModel)
 
-	if !m.done {
-		t.Error("expected done=true after token received")
+	if m.screen != screenSSO {
+		t.Errorf("expected screenSSO after token, got %d", m.screen)
+	}
+	if m.done {
+		t.Error("expected done=false on SSO screen (not yet dismissed)")
 	}
 	if m.token != "gho_abc123" {
 		t.Errorf("token: got %q, want %q", m.token, "gho_abc123")
@@ -569,8 +572,19 @@ func TestSetup_DeviceFlow_RequestCodeSuccess(t *testing.T) {
 	if m.tokenType != config.TokenTypeOAuth {
 		t.Errorf("tokenType: got %q, want %q", m.tokenType, config.TokenTypeOAuth)
 	}
+	if cmd != nil {
+		t.Error("expected nil command on SSO screen transition")
+	}
+
+	// Press 's' to skip SSO screen and complete setup
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after skipping SSO screen")
+	}
 	if cmd == nil {
-		t.Fatal("expected tea.Quit command after token")
+		t.Fatal("expected tea.Quit command after SSO skip")
 	}
 }
 
@@ -739,6 +753,245 @@ func TestSetup_DeviceFlow_BrowserError_Ignored(t *testing.T) {
 	}
 	if m.userCode != "UC" {
 		t.Errorf("userCode: got %q, want %q", m.userCode, "UC")
+	}
+}
+
+// ── SSO Screen ──────────────────────────────────────────────────────────────
+
+func ssoModel() SetupModel {
+	m := setupModel()
+	m.screen = screenSSO
+	m.token = "gho_token"
+	m.tokenType = config.TokenTypeOAuth
+	m.ssoURL = "https://github.com/settings/connections/applications/test-client"
+	return m
+}
+
+func TestSetup_SSO_ViewContainsURL(t *testing.T) {
+	m := ssoModel()
+	v := m.View()
+	if !strings.Contains(v, "https://github.com/settings/connections/applications/test-client") {
+		t.Error("SSO view should contain the authorization URL")
+	}
+	if !strings.Contains(v, "SSO Authorization") {
+		t.Error("SSO view should contain 'SSO Authorization' title")
+	}
+	if !strings.Contains(v, "[o]pen in browser") {
+		t.Error("SSO view should contain '[o]pen in browser'")
+	}
+	if !strings.Contains(v, "[s]kip") {
+		t.Error("SSO view should contain '[s]kip'")
+	}
+}
+
+func TestSetup_SSO_O_OpensBrowser(t *testing.T) {
+	m := ssoModel()
+	browserOpened := ""
+	m.openBrowser = func(url string) error {
+		browserOpened = url
+		return nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after pressing o")
+	}
+	if m.quit {
+		t.Error("expected quit=false after pressing o")
+	}
+	if browserOpened != m.ssoURL {
+		t.Errorf("browser opened: got %q, want %q", browserOpened, m.ssoURL)
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_SSO_Enter_OpensBrowser(t *testing.T) {
+	m := ssoModel()
+	browserOpened := ""
+	m.openBrowser = func(url string) error {
+		browserOpened = url
+		return nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after pressing Enter")
+	}
+	if browserOpened != m.ssoURL {
+		t.Errorf("browser opened: got %q, want %q", browserOpened, m.ssoURL)
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_SSO_S_SkipsWithoutBrowser(t *testing.T) {
+	m := ssoModel()
+	browserOpened := false
+	m.openBrowser = func(_ string) error {
+		browserOpened = true
+		return nil
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after pressing s")
+	}
+	if m.quit {
+		t.Error("expected quit=false after pressing s")
+	}
+	if browserOpened {
+		t.Error("browser should not open on skip")
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_SSO_Q_SetsDone(t *testing.T) {
+	m := ssoModel()
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after pressing q on SSO screen")
+	}
+	if m.quit {
+		t.Error("expected quit=false — token is already obtained")
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_SSO_Esc_SetsDone(t *testing.T) {
+	m := ssoModel()
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after Esc on SSO screen")
+	}
+	if m.quit {
+		t.Error("expected quit=false — token is already obtained")
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_SSO_CtrlC_SetsDone(t *testing.T) {
+	m := ssoModel()
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true after Ctrl+C on SSO screen")
+	}
+	if m.quit {
+		t.Error("expected quit=false — token is already obtained")
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_SSO_NilBrowser_NoPanic(t *testing.T) {
+	m := ssoModel()
+	m.openBrowser = nil
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = updated.(SetupModel)
+
+	if !m.done {
+		t.Error("expected done=true")
+	}
+	if cmd == nil {
+		t.Fatal("expected tea.Quit command")
+	}
+}
+
+func TestSetup_SSO_UnknownKey_Ignored(t *testing.T) {
+	m := ssoModel()
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(SetupModel)
+
+	if m.done {
+		t.Error("expected done=false for unknown key")
+	}
+	if m.quit {
+		t.Error("expected quit=false for unknown key")
+	}
+	if m.screen != screenSSO {
+		t.Errorf("expected to stay on SSO screen, got %d", m.screen)
+	}
+	if cmd != nil {
+		t.Error("expected nil command for unknown key")
+	}
+}
+
+func TestSetup_SSO_View_WithDimensions(t *testing.T) {
+	m := ssoModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(SetupModel)
+
+	v := m.View()
+	if v == "" {
+		t.Error("SSO view should not be empty with dimensions set")
+	}
+	if !strings.Contains(v, "SSO Authorization") {
+		t.Error("SSO view should contain title when rendered with dimensions")
+	}
+}
+
+func TestSetup_SSO_UnknownMsg_Ignored(t *testing.T) {
+	m := ssoModel()
+
+	updated, _ := m.Update(tea.FocusMsg{})
+	m = updated.(SetupModel)
+
+	if m.done {
+		t.Error("expected done=false for unknown message type")
+	}
+}
+
+// ── O and Enter keys on non-SSO screens ─────────────────────────────────────
+
+func TestSetup_MethodSelect_O_Ignored(t *testing.T) {
+	m := setupModel()
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = updated.(SetupModel)
+
+	if m.screen != screenMethodSelect {
+		t.Errorf("expected to stay on method selection after 'o', got screen %d", m.screen)
+	}
+	if cmd != nil {
+		t.Error("expected nil command for 'o' on method selection")
+	}
+}
+
+func TestSetup_MethodSelect_Enter_Ignored(t *testing.T) {
+	m := setupModel()
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(SetupModel)
+
+	if m.screen != screenMethodSelect {
+		t.Errorf("expected to stay on method selection after Enter, got screen %d", m.screen)
+	}
+	if cmd != nil {
+		t.Error("expected nil command for Enter on method selection")
 	}
 }
 

@@ -19,6 +19,7 @@ const (
 	screenMethodSelect setupScreen = iota
 	screenDeviceFlow
 	screenPATEntry
+	screenSSO
 )
 
 // SetupDeps groups the injectable boundaries for RunSetup.
@@ -99,6 +100,7 @@ type SetupModel struct {
 	userCode    string
 	verifyURI   string
 	polling     bool
+	ssoURL      string
 }
 
 func newSetupModel(ctx context.Context, deps SetupDeps) SetupModel {
@@ -159,11 +161,35 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "esc":
+		if m.screen == screenSSO {
+			m.done = true
+			return m, tea.Quit
+		}
 		m.quit = true
 		return m, tea.Quit
 
 	case "q":
 		return m.handleQ(msg)
+
+	case "o":
+		if m.screen == screenSSO {
+			if m.openBrowser != nil {
+				_ = m.openBrowser(m.ssoURL)
+			}
+			m.done = true
+			return m, tea.Quit
+		}
+		return m.handleDefault(msg)
+
+	case "enter":
+		if m.screen == screenSSO {
+			if m.openBrowser != nil {
+				_ = m.openBrowser(m.ssoURL)
+			}
+			m.done = true
+			return m, tea.Quit
+		}
+		return m.handleDefault(msg)
 
 	case "g":
 		if m.screen == screenMethodSelect {
@@ -196,6 +222,10 @@ func (m SetupModel) handleQ(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quit = true
 		return m, tea.Quit
 	}
+	if m.screen == screenSSO {
+		m.done = true
+		return m, tea.Quit
+	}
 	// PAT entry screen
 	if m.verifying {
 		return m, nil
@@ -210,6 +240,10 @@ func (m SetupModel) handleQ(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m SetupModel) handleS(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.screen == screenSSO {
+		m.done = true
+		return m, tea.Quit
+	}
 	if m.screen != screenPATEntry {
 		return m.handleDefault(msg)
 	}
@@ -301,8 +335,9 @@ func (m SetupModel) handleDeviceToken(msg deviceTokenMsg) (tea.Model, tea.Cmd) {
 	}
 	m.token = msg.resp.AccessToken
 	m.tokenType = config.TokenTypeOAuth
-	m.done = true
-	return m, tea.Quit
+	m.screen = screenSSO
+	m.ssoURL = fmt.Sprintf("https://github.com/settings/connections/applications/%s", m.clientID)
+	return m, nil
 }
 
 // View renders the current setup screen.
@@ -315,6 +350,8 @@ func (m SetupModel) View() string {
 		content = m.viewDeviceFlow()
 	case screenPATEntry:
 		content = m.viewPATEntry()
+	case screenSSO:
+		content = m.viewSSO()
 	}
 
 	if m.width > 0 && m.height > 0 {
@@ -349,6 +386,17 @@ func (m SetupModel) viewDeviceFlow() string {
 	code := fmt.Sprintf("Open this URL in your browser:\n  %s\n\nEnter this code:  %s", m.verifyURI, m.userCode)
 	status := "Waiting for authorization..."
 	return title + "\n\n" + code + "\n\n" + status + "  [q]uit"
+}
+
+func (m SetupModel) viewSSO() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C0C0FF"))
+	title := titleStyle.Render("argh - SSO Authorization")
+
+	desc := "If your GitHub organization uses SAML SSO, you need to\nauthorize this app for each SSO-protected org."
+	url := fmt.Sprintf("  %s", m.ssoURL)
+	controls := "[o]pen in browser  [s]kip"
+
+	return title + "\n\n" + desc + "\n\n" + url + "\n\n" + controls
 }
 
 func (m SetupModel) viewPATEntry() string {

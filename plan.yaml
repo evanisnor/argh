@@ -1443,3 +1443,31 @@ tasks:
     testing: >
       Add a 404 table case to deviceflow_test.go that asserts the new error message.
       Existing tests pass unchanged.
+
+  # ─── Phase 18: SSO Authorization UX ──────────────────────────────────────────
+
+  - id: 70
+    title: "Post-device-flow SSO authorization screen"
+    status: done
+    depends_on: [65]
+    description: >
+      After the device flow token is obtained, show a new screenSSO screen before
+      completing setup. This guides users to authorize SSO orgs since GraphQL search
+      silently excludes SSO-protected repos. Add ssoURL field to SetupModel, viewSSO
+      method, and key handling for o/s/q/esc/ctrl+c on the SSO screen.
+    testing: >
+      Update TestSetup_DeviceFlow_RequestCodeSuccess to verify screenSSO transition.
+      New tests: SSO view contains URL, o opens browser, s/q skip, esc/ctrl+c set
+      done (not quit), nil browser safety, unknown keys ignored, render with dimensions.
+
+  - id: 71
+    title: "Auto-open browser on SSO 403 with per-org dedup"
+    status: done
+    depends_on: [62]
+    description: >
+      Add BrowserSSOObserver that wraps BusSSOObserver behavior: always publishes
+      to bus, then opens browser once per org per session. Wire into main.go replacing
+      the plain BusSSOObserver.
+    testing: >
+      First org call opens browser + publishes; same org twice opens once; different
+      orgs open for each; nil OpenBrowser no panic; browser error ignored.

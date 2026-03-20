@@ -188,6 +188,97 @@ func TestBusSSOObserver_PublishesCorrectEvent(t *testing.T) {
 	}
 }
 
+func TestBrowserSSOObserver_FirstOrg_OpensBrowserAndPublishes(t *testing.T) {
+	pub := &StubPublisher{}
+	var opened []string
+	observer := NewBrowserSSOObserver(pub, func(url string) error {
+		opened = append(opened, url)
+		return nil
+	})
+
+	info := SSOInfo{OrgName: "acme", AuthorizationURL: "https://github.com/orgs/acme/sso?id=1"}
+	observer.OnSSORequired(info)
+
+	if len(pub.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(pub.Events))
+	}
+	if pub.Events[0].Type != eventbus.SSORequired {
+		t.Errorf("event type = %q, want %q", pub.Events[0].Type, eventbus.SSORequired)
+	}
+	if len(opened) != 1 {
+		t.Fatalf("expected browser opened 1 time, got %d", len(opened))
+	}
+	if opened[0] != "https://github.com/orgs/acme/sso?id=1" {
+		t.Errorf("browser URL = %q, want %q", opened[0], "https://github.com/orgs/acme/sso?id=1")
+	}
+}
+
+func TestBrowserSSOObserver_SameOrgTwice_OpensOnce(t *testing.T) {
+	pub := &StubPublisher{}
+	openCount := 0
+	observer := NewBrowserSSOObserver(pub, func(_ string) error {
+		openCount++
+		return nil
+	})
+
+	info := SSOInfo{OrgName: "acme", AuthorizationURL: "https://github.com/orgs/acme/sso?id=1"}
+	observer.OnSSORequired(info)
+	observer.OnSSORequired(info)
+
+	if len(pub.Events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(pub.Events))
+	}
+	if openCount != 1 {
+		t.Errorf("browser opened %d times, want 1", openCount)
+	}
+}
+
+func TestBrowserSSOObserver_DifferentOrgs_OpensForEach(t *testing.T) {
+	pub := &StubPublisher{}
+	var opened []string
+	observer := NewBrowserSSOObserver(pub, func(url string) error {
+		opened = append(opened, url)
+		return nil
+	})
+
+	observer.OnSSORequired(SSOInfo{OrgName: "acme", AuthorizationURL: "https://acme.example.com"})
+	observer.OnSSORequired(SSOInfo{OrgName: "widgets", AuthorizationURL: "https://widgets.example.com"})
+
+	if len(opened) != 2 {
+		t.Fatalf("expected browser opened 2 times, got %d", len(opened))
+	}
+	if opened[0] != "https://acme.example.com" {
+		t.Errorf("first URL = %q, want %q", opened[0], "https://acme.example.com")
+	}
+	if opened[1] != "https://widgets.example.com" {
+		t.Errorf("second URL = %q, want %q", opened[1], "https://widgets.example.com")
+	}
+}
+
+func TestBrowserSSOObserver_NilOpenBrowser_NoPanic(t *testing.T) {
+	pub := &StubPublisher{}
+	observer := NewBrowserSSOObserver(pub, nil)
+
+	observer.OnSSORequired(SSOInfo{OrgName: "acme", AuthorizationURL: "https://example.com"})
+
+	if len(pub.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(pub.Events))
+	}
+}
+
+func TestBrowserSSOObserver_BrowserError_Ignored(t *testing.T) {
+	pub := &StubPublisher{}
+	observer := NewBrowserSSOObserver(pub, func(_ string) error {
+		return errors.New("no browser available")
+	})
+
+	observer.OnSSORequired(SSOInfo{OrgName: "acme", AuthorizationURL: "https://example.com"})
+
+	if len(pub.Events) != 1 {
+		t.Fatalf("expected 1 event even when browser fails, got %d", len(pub.Events))
+	}
+}
+
 func TestParseSSOHeader(t *testing.T) {
 	tests := []struct {
 		name    string

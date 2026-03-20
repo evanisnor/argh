@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/evanisnor/argh/internal/eventbus"
 )
@@ -31,6 +32,46 @@ func (b *BusSSOObserver) OnSSORequired(info SSOInfo) {
 		Type:  eventbus.SSORequired,
 		After: info,
 	})
+}
+
+// BrowserSSOObserver publishes SSORequired events to the bus and opens the
+// authorization URL in the browser once per org per session.
+type BrowserSSOObserver struct {
+	Bus         Publisher
+	OpenBrowser func(url string) error
+	mu          sync.Mutex
+	opened      map[string]bool
+}
+
+// NewBrowserSSOObserver returns a BrowserSSOObserver that publishes events and
+// opens the browser once per org.
+func NewBrowserSSOObserver(bus Publisher, openBrowser func(string) error) *BrowserSSOObserver {
+	return &BrowserSSOObserver{
+		Bus:         bus,
+		OpenBrowser: openBrowser,
+		opened:      make(map[string]bool),
+	}
+}
+
+// OnSSORequired publishes an SSORequired event and opens the browser for the
+// org's authorization URL if it hasn't been opened yet this session.
+func (b *BrowserSSOObserver) OnSSORequired(info SSOInfo) {
+	b.Bus.Publish(eventbus.Event{
+		Type:  eventbus.SSORequired,
+		After: info,
+	})
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.opened[info.OrgName] {
+		return
+	}
+	b.opened[info.OrgName] = true
+
+	if b.OpenBrowser != nil {
+		_ = b.OpenBrowser(info.AuthorizationURL)
+	}
 }
 
 // ssoTransport wraps a base http.RoundTripper and inspects every response for

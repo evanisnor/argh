@@ -328,7 +328,7 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 
 	// Wrap transport with SSO detection so 403s with X-GitHub-SSO header
 	// surface the authorization URL in the TUI status bar.
-	ssoObserver := &api.BusSSOObserver{Bus: bus}
+	ssoObserver := api.NewBrowserSSOObserver(bus, execOpen)
 	httpClient.Transport = api.NewSSOTransport(httpClient.Transport, ssoObserver)
 
 	gqlClient := githubv4.NewClient(httpClient)
