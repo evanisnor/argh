@@ -1423,7 +1423,7 @@ tasks:
 
   - id: 68
     title: "Replace placeholder OAuth client ID"
-    status: pending
+    status: done
     depends_on: [64]
     description: >
       Replace "Ov23liYOUR_CLIENT_ID" in internal/config/config.go with the real

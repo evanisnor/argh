@@ -85,7 +85,7 @@ func (d *duration) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-const defaultOAuthClientID = "Ov23liYOUR_CLIENT_ID"
+const defaultOAuthClientID = "Iv23liXdtf1Lmtn2nFU4"
 
 // defaults returns a Config with all default values applied.
 func defaults() Config {
