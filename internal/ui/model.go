@@ -69,6 +69,18 @@ type DNDToggler interface {
 	IsDND() bool
 }
 
+// CommandBarOverlay is the optional interface implemented by the command bar
+// sub-model to expose its suggestion pane for overlay rendering. The root
+// model uses a type assertion to check for this; other sub-models need not
+// implement it.
+type CommandBarOverlay interface {
+	// HasSuggestions reports whether there are autocomplete suggestions to show.
+	HasSuggestions() bool
+	// SuggestionsView renders the suggestion list as a plain string (no width
+	// or background styling applied; the caller handles that).
+	SuggestionsView() string
+}
+
 // SubModel is the interface that every panel and pane implements so the root
 // model can delegate Update and View calls uniformly.
 type SubModel interface {
@@ -637,6 +649,10 @@ func (m Model) View() string {
 
 	normal := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
+	if sugg := m.commandBarSuggestionsView(); sugg != "" {
+		normal = overlayAbove(normal, sugg)
+	}
+
 	if m.helpVisible {
 		return lipgloss.JoinVertical(lipgloss.Left,
 			dimBackground(normal),
@@ -711,4 +727,20 @@ func (m Model) commandBarView() string {
 		style = style.Width(m.width)
 	}
 	return style.Render("> " + m.commandBar.View())
+}
+
+// commandBarSuggestionsView returns the styled suggestion overlay content, or
+// an empty string when there are no suggestions or the command bar does not
+// implement CommandBarOverlay.
+func (m Model) commandBarSuggestionsView() string {
+	cb, ok := m.commandBar.(CommandBarOverlay)
+	if !ok || !cb.HasSuggestions() {
+		return ""
+	}
+	v := cb.SuggestionsView()
+	style := m.theme.CommandBar
+	if m.width > 0 {
+		style = style.Width(m.width)
+	}
+	return style.Render(v)
 }

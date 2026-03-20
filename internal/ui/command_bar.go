@@ -440,33 +440,46 @@ func fuzzyFilterStrings(pattern string, items []string) []string {
 	return out
 }
 
-// View renders the command bar. When focused it shows up to maxSuggestions
-// suggestions above the textinput line, followed by the current hint.
-// Rendering suggestions before the input means they appear above the bar when
-// it is anchored at the bottom of the terminal.
+// HasSuggestions reports whether the command bar currently has autocomplete
+// suggestions to display.
+func (c *CommandBar) HasSuggestions() bool {
+	return len(c.suggestions) > 0
+}
+
+// SuggestionsView renders the autocomplete suggestion list as a standalone
+// string. Returns an empty string when there are no suggestions. The caller
+// is responsible for applying any width or background styling.
+func (c *CommandBar) SuggestionsView() string {
+	if len(c.suggestions) == 0 {
+		return ""
+	}
+	limit := len(c.suggestions)
+	if limit > maxSuggestions {
+		limit = maxSuggestions
+	}
+	var sb strings.Builder
+	for i := 0; i < limit; i++ {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		if i == c.suggCursor {
+			sb.WriteString("> ")
+		} else {
+			sb.WriteString("  ")
+		}
+		sb.WriteString(c.suggestions[i])
+	}
+	return sb.String()
+}
+
+// View renders the command bar input line and optional hint. Suggestion lines
+// are rendered separately via SuggestionsView and overlaid by the root model.
 func (c *CommandBar) View() string {
 	if !c.focused {
 		return "/ or : for commands"
 	}
 
 	var sb strings.Builder
-
-	if len(c.suggestions) > 0 {
-		limit := len(c.suggestions)
-		if limit > maxSuggestions {
-			limit = maxSuggestions
-		}
-		for i := 0; i < limit; i++ {
-			if i == c.suggCursor {
-				sb.WriteString("> ")
-			} else {
-				sb.WriteString("  ")
-			}
-			sb.WriteString(c.suggestions[i])
-			sb.WriteString("\n")
-		}
-	}
-
 	sb.WriteString(c.input.View())
 	if c.hint != "" {
 		sb.WriteString("  ")

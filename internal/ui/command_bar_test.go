@@ -118,9 +118,14 @@ func TestCommandBar_View_Focused_WithSuggestions(t *testing.T) {
 	cb := NewCommandBar()
 	focusBar(t, cb)
 	typeInto(t, cb, ":me")
+	// Suggestions are no longer part of View(); they are in SuggestionsView().
 	v := cb.View()
-	if !strings.Contains(v, ":merge") {
-		t.Errorf("expected :merge in suggestions, view: %q", v)
+	if strings.Contains(v, "\n") {
+		t.Errorf("View() should be single-line even with suggestions, got: %q", v)
+	}
+	sv := cb.SuggestionsView()
+	if !strings.Contains(sv, ":merge") {
+		t.Errorf("expected :merge in SuggestionsView(), got: %q", sv)
 	}
 }
 
@@ -139,23 +144,74 @@ func TestCommandBar_View_SuggestionCursorHighlighted(t *testing.T) {
 	cb := NewCommandBar()
 	focusBar(t, cb)
 	typeInto(t, cb, ":me")
-	v := cb.View()
-	// The top suggestion should be marked with "> ".
-	if !strings.Contains(v, "> ") {
-		t.Errorf("expected '>  ' cursor in suggestion list, view: %q", v)
+	// Cursor indicator is in SuggestionsView(), not View().
+	sv := cb.SuggestionsView()
+	if !strings.Contains(sv, "> ") {
+		t.Errorf("expected '> ' cursor in SuggestionsView(), got: %q", sv)
+	}
+}
+
+func TestCommandBar_SuggestionsView_MoreThanMaxSuggestions(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	// Empty input → all commands shown, but SuggestionsView should cap at maxSuggestions.
+	sv := cb.SuggestionsView()
+	lines := strings.Split(sv, "\n")
+	if len(lines) > maxSuggestions {
+		t.Errorf("expected at most %d suggestion lines, got %d", maxSuggestions, len(lines))
 	}
 }
 
 func TestCommandBar_View_MoreThanMaxSuggestions(t *testing.T) {
 	cb := NewCommandBar()
 	focusBar(t, cb)
-	// Empty input → all commands shown, but View should limit to maxSuggestions.
+	// View() must be single-line regardless of how many suggestions exist.
 	v := cb.View()
-	lines := strings.Split(v, "\n")
-	// First line is the input; remaining are suggestions capped at maxSuggestions.
-	suggLines := lines[1:]
-	if len(suggLines) > maxSuggestions {
-		t.Errorf("expected at most %d suggestion lines, got %d", maxSuggestions, len(suggLines))
+	if strings.Contains(v, "\n") {
+		t.Errorf("View() must be single-line even with many suggestions, got: %q", v)
+	}
+}
+
+func TestCommandBar_HasSuggestions(t *testing.T) {
+	// Unfocused: no suggestions.
+	cb := NewCommandBar()
+	if cb.HasSuggestions() {
+		t.Error("expected HasSuggestions() false when unfocused")
+	}
+
+	// Focused with a non-matching input: no suggestions.
+	cb2 := NewCommandBar()
+	focusBar(t, cb2)
+	typeInto(t, cb2, ":zzznomatch")
+	if cb2.HasSuggestions() {
+		t.Error("expected HasSuggestions() false when no suggestions match")
+	}
+
+	// Focused with a matching input: has suggestions.
+	cb3 := NewCommandBar()
+	focusBar(t, cb3)
+	typeInto(t, cb3, ":me")
+	if !cb3.HasSuggestions() {
+		t.Error("expected HasSuggestions() true after typing ':me'")
+	}
+}
+
+func TestCommandBar_SuggestionsView_EmptyWhenNoSuggestions(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	typeInto(t, cb, ":zzznomatch")
+	if sv := cb.SuggestionsView(); sv != "" {
+		t.Errorf("expected empty SuggestionsView() when no suggestions, got: %q", sv)
+	}
+}
+
+func TestCommandBar_SuggestionsView_NoTrailingNewline(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	typeInto(t, cb, ":me")
+	sv := cb.SuggestionsView()
+	if strings.HasSuffix(sv, "\n") {
+		t.Errorf("SuggestionsView() must not end with newline, got: %q", sv)
 	}
 }
 

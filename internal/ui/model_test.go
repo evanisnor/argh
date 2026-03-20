@@ -62,7 +62,26 @@ func (s *stubSubModel) HasContent() bool {
 	return s.content
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// stubCommandBarOverlay extends stubSubModel to implement CommandBarOverlay,
+// allowing tests to exercise the suggestion overlay path in Model.View().
+type stubCommandBarOverlay struct {
+	*stubSubModel
+	hasSugg bool
+	suggView string
+}
+
+func newSuggStub(name string, hasSugg bool, suggView string) *stubCommandBarOverlay {
+	return &stubCommandBarOverlay{
+		stubSubModel: newStub(name, false),
+		hasSugg:      hasSugg,
+		suggView:     suggView,
+	}
+}
+
+func (s *stubCommandBarOverlay) HasSuggestions() bool { return s.hasSugg }
+func (s *stubCommandBarOverlay) SuggestionsView() string { return s.suggView }
+
+
 
 // plainTheme returns a zero-decoration theme so View() output is easy to assert
 // on without lipgloss escape codes.
@@ -176,6 +195,88 @@ func TestView_DetailPaneVisibleWhenOpen(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "DETAIL") {
 		t.Errorf("View() should contain DETAIL when detail pane is open\ngot:\n%s", view)
+	}
+}
+
+func TestView_SuggestionOverlay_PaintsSuggestionsAboveCommandBar(t *testing.T) {
+	cmdBar := newSuggStub("cmdBar", true, "suggestion line")
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cmdBar,
+	)
+
+	view := m.View()
+	if !strings.Contains(view, "suggestion line") {
+		t.Errorf("View() should contain suggestion overlay when HasSuggestions is true\ngot:\n%s", view)
+	}
+}
+
+func TestView_SuggestionOverlay_AbsentWhenNoSuggestions(t *testing.T) {
+	cmdBar := newSuggStub("cmdBar", false, "")
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cmdBar,
+	)
+
+	view := m.View()
+	// suggestion view is empty — overlay must not inject anything unexpected
+	if strings.Contains(view, "suggestion line") {
+		t.Errorf("View() must not contain suggestion overlay when HasSuggestions is false\ngot:\n%s", view)
+	}
+}
+
+func TestCommandBarSuggestionsView_WithWidth(t *testing.T) {
+	cmdBar := newSuggStub("cmdBar", true, "suggestion")
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cmdBar,
+	)
+	m.width = 80
+
+	v := m.commandBarSuggestionsView()
+	if v == "" {
+		t.Error("commandBarSuggestionsView() should return non-empty when HasSuggestions is true")
+	}
+}
+
+func TestCommandBarSuggestionsView_NoSuggestions(t *testing.T) {
+	cmdBar := newSuggStub("cmdBar", false, "")
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cmdBar,
+	)
+
+	v := m.commandBarSuggestionsView()
+	if v != "" {
+		t.Errorf("commandBarSuggestionsView() should return empty when HasSuggestions is false, got: %q", v)
+	}
+}
+
+func TestCommandBarSuggestionsView_NonOverlaySubModel(t *testing.T) {
+	// A plain stubSubModel does not implement CommandBarOverlay.
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+
+	v := m.commandBarSuggestionsView()
+	if v != "" {
+		t.Errorf("commandBarSuggestionsView() should return empty for non-overlay sub-model, got: %q", v)
 	}
 }
 
