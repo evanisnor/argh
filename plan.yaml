@@ -1575,7 +1575,7 @@ tasks:
 
   - id: 91
     title: "Implement FixedRateLimitReader"
-    status: pending
+    status: done
     depends_on: []
     description: >
       Implements api.RateLimitReader. CurrentState() always returns full quota
