@@ -40,6 +40,36 @@ func startPoller(
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+func TestPoller_InitialFetch_CalledOnStart(t *testing.T) {
+	calls := make(chan string, 10)
+
+	myPRs := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		calls <- "myPRs"
+		return nil
+	}}
+	reviewQueue := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		calls <- "reviewQueue"
+		return nil
+	}}
+
+	rl := NewStubRateLimitReader(5000)
+
+	_, cancel, _, done := startPoller(t, myPRs, reviewQueue, rl, time.Second)
+	defer func() { cancel(); <-done }()
+
+	// Both fetchers should be called by the initial fetch before any tick.
+	received := map[string]bool{}
+	timeout := time.After(200 * time.Millisecond)
+	for len(received) < 2 {
+		select {
+		case name := <-calls:
+			received[name] = true
+		case <-timeout:
+			t.Fatalf("initial fetch called: %v; expected both myPRs and reviewQueue", received)
+		}
+	}
+}
+
 func TestPoller_TickerFires_BothFetchersCalled(t *testing.T) {
 	calls := make(chan string, 10)
 
@@ -156,7 +186,7 @@ func TestPoller_IntervalAdjusted_OnRateLimitChange(t *testing.T) {
 }
 
 func TestPoller_PausedWhenRateLimitCritical_FetchNotCalled(t *testing.T) {
-	fetchCalled := make(chan struct{}, 1)
+	fetchCalled := make(chan struct{}, 10)
 	myPRs := &StubFetcher{FetchFunc: func(_ context.Context) error {
 		fetchCalled <- struct{}{}
 		return nil
@@ -167,14 +197,21 @@ func TestPoller_PausedWhenRateLimitCritical_FetchNotCalled(t *testing.T) {
 	_, cancel, fakeTicker, done := startPoller(t, myPRs, NewStubFetcher(), rl, time.Second)
 	defer func() { cancel(); <-done }()
 
-	fakeTicker.Tick()
-
-	// Fetch must NOT be called within a short window.
+	// Drain the initial fetch call (unconditional, ignores rate limit).
 	select {
 	case <-fetchCalled:
-		t.Error("fetch was called when rate limit was paused (remaining < 100)")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("initial fetch did not call fetcher")
+	}
+
+	fakeTicker.Tick()
+
+	// Tick-triggered fetch must NOT be called when rate limit is paused.
+	select {
+	case <-fetchCalled:
+		t.Error("fetch was called on tick when rate limit was paused (remaining < 100)")
 	case <-time.After(50 * time.Millisecond):
-		// correct: no fetch
+		// correct: no fetch on tick
 	}
 }
 
@@ -226,19 +263,20 @@ func TestPoller_ForcePoll_AlwaysFetches_EvenWhenPaused(t *testing.T) {
 func TestPoller_FetchError_PollerContinues(t *testing.T) {
 	// If the first fetcher returns an error, the second is not called for that
 	// fetch cycle, but the poller keeps running and fetches again on the next tick.
+	// The initial fetch (before the loop) consumes the firstCall=true error case.
 	firstCall := true
-	secondTickCalls := make(chan string, 10)
+	calls := make(chan string, 10)
 
 	myPRs := &StubFetcher{FetchFunc: func(_ context.Context) error {
 		if firstCall {
 			firstCall = false
 			return errors.New("transient error")
 		}
-		secondTickCalls <- "myPRs"
+		calls <- "myPRs"
 		return nil
 	}}
 	reviewQueue := &StubFetcher{FetchFunc: func(_ context.Context) error {
-		secondTickCalls <- "reviewQueue"
+		calls <- "reviewQueue"
 		return nil
 	}}
 
@@ -247,28 +285,25 @@ func TestPoller_FetchError_PollerContinues(t *testing.T) {
 	_, cancel, fakeTicker, done := startPoller(t, myPRs, reviewQueue, rl, time.Second)
 	defer func() { cancel(); <-done }()
 
-	// First tick — myPRs returns error; reviewQueue should not be called.
-	fakeTicker.Tick()
-
-	// Brief pause, then verify reviewQueue was NOT called.
+	// Initial fetch errors on myPRs; reviewQueue should NOT be called.
 	time.Sleep(20 * time.Millisecond)
 	select {
-	case name := <-secondTickCalls:
-		t.Errorf("unexpected call to %s on first (error) tick", name)
+	case name := <-calls:
+		t.Errorf("unexpected call to %s during initial (error) fetch", name)
 	default:
 	}
 
-	// Second tick — both succeed.
+	// First tick — both succeed since firstCall is now false.
 	fakeTicker.Tick()
 
 	received := map[string]bool{}
 	timeout := time.After(200 * time.Millisecond)
 	for len(received) < 2 {
 		select {
-		case name := <-secondTickCalls:
+		case name := <-calls:
 			received[name] = true
 		case <-timeout:
-			t.Fatalf("fetchers called on second tick: %v; expected both", received)
+			t.Fatalf("fetchers called on first tick: %v; expected both", received)
 		}
 	}
 }

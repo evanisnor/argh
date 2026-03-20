@@ -1636,3 +1636,39 @@ tasks:
     testing: >
       Update stub expectation from [auth status --hostname github.com] to [auth status].
       Add test case for multi-host output format (two hosts, picks first account line).
+
+  # ─── Phase 21: Poller Initial Fetch Fix ──────────────────────────────────────
+
+  - id: 96
+    title: "Add initial fetch to Poller.run()"
+    status: done
+    depends_on: [12]
+    description: >
+      Add _ = p.fetch(ctx) immediately before the for loop in run(), after
+      ticker creation. This ensures the UI has data immediately on startup
+      rather than waiting for the first tick (30s for ghcli backend).
+    testing: >
+      Add TestPoller_InitialFetch_CalledOnStart. Verify both fetchers are called
+      before any tick fires.
+
+  - id: 97
+    title: "Update affected poller tests for initial fetch"
+    status: done
+    depends_on: [96]
+    description: >
+      TestPoller_PausedWhenRateLimitCritical_FetchNotCalled: drain initial fetch
+      call before asserting ticks don't trigger additional fetches.
+      TestPoller_FetchError_PollerContinues: initial fetch consumes firstCall=true
+      error case; adjust so test expects initial fetch error then tick success.
+    testing: >
+      All existing poller tests pass with the initial fetch change.
+
+  - id: 98
+    title: "Add poller lifecycle logging"
+    status: done
+    depends_on: [96]
+    description: >
+      Add slog.Debug calls for poller lifecycle events: starting (with interval),
+      initial fetch complete, tick fetch, force poll, stopped.
+    testing: >
+      slog.Debug calls are side-effect-only. Existing tests cover all code paths.

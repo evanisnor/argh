@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"time"
 )
 
@@ -117,13 +118,21 @@ func (p *Poller) run(ctx context.Context) {
 	ticker := p.newTicker(interval)
 	defer ticker.Stop()
 
+	slog.Debug("poller: starting", "interval", interval)
+
+	_ = p.fetch(ctx)
+	slog.Debug("poller: initial fetch complete")
+
 	for {
 		select {
 		case <-ctx.Done():
+			slog.Debug("poller: stopped")
 			return
 		case <-p.forcePoll:
+			slog.Debug("poller: force poll")
 			_ = p.fetch(ctx)
 		case <-ticker.C():
+			slog.Debug("poller: tick fetch")
 			newInterval, doFetch := p.pollState()
 			if newInterval != interval {
 				interval = newInterval
