@@ -3,6 +3,7 @@ package ghcli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,8 +14,14 @@ import (
 
 func TestGHCLIReviewQueueFetcher_Fetch_Success(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
-		return []byte(rqJSON), nil
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(rqSearchJSON), nil
+		}
+		if args[0] == "pr" && args[1] == "view" {
+			return []byte(rqDetailJSON), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %v", args)
 	}
 	store := api.NewStubReviewQueueStore()
 	pub := &api.StubPublisher{}
@@ -55,11 +62,16 @@ func TestGHCLIReviewQueueFetcher_Fetch_Success(t *testing.T) {
 	if pub.Events[0].Type != eventbus.PRUpdated {
 		t.Errorf("event type = %v, want %v", pub.Events[0].Type, eventbus.PRUpdated)
 	}
+
+	// Verify two-phase: search call + pr view call
+	if runner.CallCount() != 2 {
+		t.Errorf("expected 2 runner calls (search + view), got %d", runner.CallCount())
+	}
 }
 
 func TestGHCLIReviewQueueFetcher_Fetch_EmptyResult(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
 		return []byte("[]"), nil
 	}
 	store := api.NewStubReviewQueueStore()
@@ -107,8 +119,11 @@ func TestGHCLIReviewQueueFetcher_Fetch_MalformedJSON(t *testing.T) {
 
 func TestGHCLIReviewQueueFetcher_Fetch_PersistError(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
-		return []byte(rqJSON), nil
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(rqSearchJSON), nil
+		}
+		return []byte(rqDetailJSON), nil
 	}
 	upsertErr := errors.New("upsert failed")
 	store := api.NewStubReviewQueueStore()
@@ -124,7 +139,7 @@ func TestGHCLIReviewQueueFetcher_Fetch_PersistError(t *testing.T) {
 
 func TestGHCLIReviewQueueFetcher_Fetch_SkipsEmptyRepo(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
 		return []byte(`[{"id":"PR_1","number":1,"repository":{"name":"","nameWithOwner":""}}]`), nil
 	}
 	store := api.NewStubReviewQueueStore()
@@ -152,6 +167,30 @@ func TestGHCLIReviewQueueFetcher_CorrectArgs(t *testing.T) {
 
 	if runner.FindCall("--review-requested", "alice") == nil {
 		t.Error("expected --review-requested alice in args")
+	}
+}
+
+func TestGHCLIReviewQueueFetcher_Fetch_DetailFetchError_PersistsWithEmptyDetail(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(rqSearchJSON), nil
+		}
+		return nil, errors.New("pr view failed")
+	}
+	store := api.NewStubReviewQueueStore()
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIReviewQueueFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch should succeed despite detail error, got: %v", err)
+	}
+
+	if len(store.UpsertedPRs) != 1 {
+		t.Fatalf("expected 1 upserted PR, got %d", len(store.UpsertedPRs))
+	}
+	if store.UpsertedPRs[0].CIState != "none" {
+		t.Errorf("CIState = %q, want %q (empty detail)", store.UpsertedPRs[0].CIState, "none")
 	}
 }
 
@@ -198,7 +237,8 @@ func TestConvertCommits_Empty(t *testing.T) {
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
-const rqJSON = `[
+// Search result: only fields supported by gh search prs
+const rqSearchJSON = `[
   {
     "id": "PR_rq1",
     "number": 10,
@@ -209,12 +249,16 @@ const rqJSON = `[
     "createdAt": "2024-02-01T00:00:00Z",
     "updatedAt": "2024-02-02T00:00:00Z",
     "author": {"login": "bob"},
-    "repository": {"name": "repo", "nameWithOwner": "owner/repo"},
-    "statusCheckRollup": [],
-    "reviews": [],
-    "reviewRequests": [{"login": "alice"}],
-    "commits": [
-      {"authorLogin": "bob", "committedDate": "2024-02-01T12:00:00Z"}
-    ]
+    "repository": {"name": "repo", "nameWithOwner": "owner/repo"}
   }
 ]`
+
+// Detail result from gh pr view --json
+const rqDetailJSON = `{
+  "statusCheckRollup": [],
+  "reviews": [],
+  "reviewRequests": [{"login": "alice"}],
+  "commits": [
+    {"authors": [{"login": "bob"}], "committedDate": "2024-02-01T12:00:00Z"}
+  ]
+}`

@@ -3,6 +3,7 @@ package ghcli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/evanisnor/argh/internal/api"
@@ -12,8 +13,14 @@ import (
 
 func TestGHCLIMyPRsFetcher_Fetch_Success(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
-		return []byte(myPRsJSON), nil
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(myPRsSearchJSON), nil
+		}
+		if args[0] == "pr" && args[1] == "view" {
+			return []byte(myPRsDetailJSON), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %v", args)
 	}
 	store := api.NewStubPRStore()
 	pub := &api.StubPublisher{}
@@ -55,11 +62,16 @@ func TestGHCLIMyPRsFetcher_Fetch_Success(t *testing.T) {
 	if pub.Events[0].Type != eventbus.PRUpdated {
 		t.Errorf("event type = %v, want %v", pub.Events[0].Type, eventbus.PRUpdated)
 	}
+
+	// Verify two-phase: search call + pr view call
+	if runner.CallCount() != 2 {
+		t.Errorf("expected 2 runner calls (search + view), got %d", runner.CallCount())
+	}
 }
 
 func TestGHCLIMyPRsFetcher_Fetch_EmptyResult(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
 		return []byte("[]"), nil
 	}
 	store := api.NewStubPRStore()
@@ -114,8 +126,11 @@ func TestGHCLIMyPRsFetcher_Fetch_MalformedJSON(t *testing.T) {
 
 func TestGHCLIMyPRsFetcher_Fetch_PersistError(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
-		return []byte(myPRsJSON), nil
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(myPRsSearchJSON), nil
+		}
+		return []byte(myPRsDetailJSON), nil
 	}
 	upsertErr := errors.New("upsert failed")
 	store := api.NewStubPRStore()
@@ -134,7 +149,7 @@ func TestGHCLIMyPRsFetcher_Fetch_PersistError(t *testing.T) {
 
 func TestGHCLIMyPRsFetcher_Fetch_SkipsEmptyRepo(t *testing.T) {
 	runner := NewStubCommandRunner()
-	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
 		return []byte(`[{"id":"PR_1","number":1,"repository":{"name":"","nameWithOwner":""}}]`), nil
 	}
 	store := api.NewStubPRStore()
@@ -169,6 +184,103 @@ func TestGHCLIMyPRsFetcher_CorrectArgs(t *testing.T) {
 	}
 	if runner.FindCall("--author", "alice") == nil {
 		t.Error("expected --author alice in args")
+	}
+}
+
+func TestGHCLIMyPRsFetcher_Fetch_DetailFetchError_PersistsWithEmptyDetail(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(myPRsSearchJSON), nil
+		}
+		// Detail fetch fails
+		return nil, errors.New("pr view failed")
+	}
+	store := api.NewStubPRStore()
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIMyPRsFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch should succeed despite detail error, got: %v", err)
+	}
+
+	// PR still persisted with empty CI/review data
+	if len(store.UpsertedPRs) != 1 {
+		t.Fatalf("expected 1 upserted PR, got %d", len(store.UpsertedPRs))
+	}
+	if store.UpsertedPRs[0].CIState != "none" {
+		t.Errorf("CIState = %q, want %q (empty detail)", store.UpsertedPRs[0].CIState, "none")
+	}
+}
+
+func TestGHCLIMyPRsFetcher_Fetch_DetailMalformedJSON_PersistsWithEmptyDetail(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(myPRsSearchJSON), nil
+		}
+		return []byte("{bad json"), nil
+	}
+	store := api.NewStubPRStore()
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIMyPRsFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch should succeed despite malformed detail, got: %v", err)
+	}
+
+	if len(store.UpsertedPRs) != 1 {
+		t.Fatalf("expected 1 upserted PR, got %d", len(store.UpsertedPRs))
+	}
+}
+
+func TestFetchPRDetail_Success(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(myPRsDetailJSON), nil
+	}
+
+	detail, err := fetchPRDetail(context.Background(), runner, "owner/repo", 42, "statusCheckRollup,reviews,reviewRequests")
+	if err != nil {
+		t.Fatalf("fetchPRDetail error = %v", err)
+	}
+	if len(detail.StatusCheckRollup) != 1 {
+		t.Errorf("expected 1 status check, got %d", len(detail.StatusCheckRollup))
+	}
+	if len(detail.Reviews) != 1 {
+		t.Errorf("expected 1 review, got %d", len(detail.Reviews))
+	}
+
+	call := runner.FindCall("pr", "view")
+	if call == nil {
+		t.Fatal("expected pr view call")
+	}
+	if runner.FindCall("--repo", "owner/repo") == nil {
+		t.Error("expected --repo owner/repo in args")
+	}
+}
+
+func TestFetchPRDetail_CommandError(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return nil, errors.New("command failed")
+	}
+
+	_, err := fetchPRDetail(context.Background(), runner, "owner/repo", 42, "statusCheckRollup")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestFetchPRDetail_MalformedJSON(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte("not json"), nil
+	}
+
+	_, err := fetchPRDetail(context.Background(), runner, "owner/repo", 42, "statusCheckRollup")
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
 
@@ -284,7 +396,8 @@ func TestConvertReviews_Empty(t *testing.T) {
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
-const myPRsJSON = `[
+// Search result: only fields supported by gh search prs
+const myPRsSearchJSON = `[
   {
     "id": "PR_abc",
     "number": 42,
@@ -295,13 +408,17 @@ const myPRsJSON = `[
     "createdAt": "2024-01-01T00:00:00Z",
     "updatedAt": "2024-01-02T00:00:00Z",
     "author": {"login": "alice"},
-    "repository": {"name": "repo", "nameWithOwner": "owner/repo"},
-    "statusCheckRollup": [
-      {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
-    ],
-    "reviews": [
-      {"author": {"login": "bob"}, "state": "APPROVED"}
-    ],
-    "reviewRequests": []
+    "repository": {"name": "repo", "nameWithOwner": "owner/repo"}
   }
 ]`
+
+// Detail result from gh pr view --json
+const myPRsDetailJSON = `{
+  "statusCheckRollup": [
+    {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
+  ],
+  "reviews": [
+    {"author": {"login": "bob"}, "state": "APPROVED"}
+  ],
+  "reviewRequests": []
+}`

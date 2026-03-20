@@ -12,18 +12,10 @@ import (
 	"github.com/shurcooL/githubv4"
 )
 
-// ghSearchRQPR extends ghSearchPR with commit data for review queue PRs.
-type ghSearchRQPR struct {
-	ghSearchPR
-	Commits []ghCommit `json:"commits"`
-}
-
 type ghCommit struct {
-	AuthorLogin   string    `json:"authorLogin"`
-	CommittedDate time.Time `json:"committedDate"`
-	// The gh search prs --json commits returns an object with nested fields.
-	// We also support the authors array format.
-	Authors []ghCommitAuthor `json:"authors"`
+	AuthorLogin   string           `json:"authorLogin"`
+	CommittedDate time.Time        `json:"committedDate"`
+	Authors       []ghCommitAuthor `json:"authors"`
 }
 
 type ghCommitAuthor struct {
@@ -49,13 +41,15 @@ func NewGHCLIReviewQueueFetcher(runner CommandRunner, store api.ReviewQueueStore
 }
 
 // Fetch queries for open PRs where the user is a requested reviewer and persists them.
+// Phase 1: gh search prs for the PR list (supported fields only).
+// Phase 2: gh pr view per PR for statusCheckRollup, reviews, reviewRequests, commits.
 func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 	args := []string{
 		"search", "prs",
 		"--review-requested", f.login,
 		"--state", "open",
 		"--limit", "100",
-		"--json", "id,number,title,state,isDraft,url,createdAt,updatedAt,author,repository,statusCheckRollup,reviews,reviewRequests,commits",
+		"--json", "id,number,title,state,isDraft,url,createdAt,updatedAt,author,repository",
 	}
 
 	out, err := f.runner.Run(ctx, args)
@@ -63,7 +57,7 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 		return fmt.Errorf("fetching review queue via gh: %w", err)
 	}
 
-	var prs []ghSearchRQPR
+	var prs []ghSearchPR
 	if err := json.Unmarshal(out, &prs); err != nil {
 		return fmt.Errorf("parsing gh search prs output: %w", err)
 	}
@@ -76,9 +70,14 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 			continue
 		}
 
-		runs := convertStatusChecks(p.StatusCheckRollup)
-		reviews := convertReviews(p.Reviews)
-		commits := convertCommits(p.Commits)
+		detail, err := fetchPRDetail(ctx, f.runner, repo, p.Number, "statusCheckRollup,reviews,reviewRequests,commits")
+		if err != nil {
+			slog.Error("ghcli: pr detail fetch failed, persisting with empty detail", "repo", repo, "number", p.Number, "error", err)
+		}
+
+		runs := convertStatusChecks(detail.StatusCheckRollup)
+		reviews := convertReviews(detail.Reviews)
+		commits := convertCommits(detail.Commits)
 
 		prRow := persistence.PullRequest{
 			ID:             p.ID,

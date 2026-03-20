@@ -12,20 +12,18 @@ import (
 )
 
 // ghSearchPR models a single result from `gh search prs --json ...`.
+// Only includes fields supported by the search endpoint.
 type ghSearchPR struct {
-	ID                string              `json:"id"`
-	Number            int                 `json:"number"`
-	Title             string              `json:"title"`
-	State             string              `json:"state"`
-	IsDraft           bool                `json:"isDraft"`
-	URL               string              `json:"url"`
-	CreatedAt         time.Time           `json:"createdAt"`
-	UpdatedAt         time.Time           `json:"updatedAt"`
-	Author            ghAuthor            `json:"author"`
-	Repository        ghRepository        `json:"repository"`
-	StatusCheckRollup []ghStatusCheck     `json:"statusCheckRollup"`
-	Reviews           []ghReview          `json:"reviews"`
-	ReviewRequests    []ghReviewRequest   `json:"reviewRequests"`
+	ID         string       `json:"id"`
+	Number     int          `json:"number"`
+	Title      string       `json:"title"`
+	State      string       `json:"state"`
+	IsDraft    bool         `json:"isDraft"`
+	URL        string       `json:"url"`
+	CreatedAt  time.Time    `json:"createdAt"`
+	UpdatedAt  time.Time    `json:"updatedAt"`
+	Author     ghAuthor     `json:"author"`
+	Repository ghRepository `json:"repository"`
 }
 
 type ghAuthor struct {
@@ -33,8 +31,16 @@ type ghAuthor struct {
 }
 
 type ghRepository struct {
-	Name            string `json:"name"`
-	NameWithOwner   string `json:"nameWithOwner"`
+	Name          string `json:"name"`
+	NameWithOwner string `json:"nameWithOwner"`
+}
+
+// ghPRDetail models the detail fields fetched via `gh pr view --json ...`.
+type ghPRDetail struct {
+	StatusCheckRollup []ghStatusCheck   `json:"statusCheckRollup"`
+	Reviews           []ghReview        `json:"reviews"`
+	ReviewRequests    []ghReviewRequest `json:"reviewRequests"`
+	Commits           []ghCommit        `json:"commits"`
 }
 
 type ghStatusCheck struct {
@@ -56,6 +62,26 @@ type ghReviewRequest struct {
 	Name  string `json:"name"`
 }
 
+// fetchPRDetail fetches detail fields for a single PR via `gh pr view`.
+func fetchPRDetail(ctx context.Context, runner CommandRunner, repo string, number int, fields string) (ghPRDetail, error) {
+	args := []string{
+		"pr", "view", fmt.Sprintf("%d", number),
+		"--repo", repo,
+		"--json", fields,
+	}
+
+	out, err := runner.Run(ctx, args)
+	if err != nil {
+		return ghPRDetail{}, fmt.Errorf("fetching PR detail for %s#%d: %w", repo, number, err)
+	}
+
+	var detail ghPRDetail
+	if err := json.Unmarshal(out, &detail); err != nil {
+		return ghPRDetail{}, fmt.Errorf("parsing PR detail for %s#%d: %w", repo, number, err)
+	}
+	return detail, nil
+}
+
 // GHCLIMyPRsFetcher fetches the authenticated user's open PRs via `gh search prs`.
 type GHCLIMyPRsFetcher struct {
 	runner CommandRunner
@@ -75,13 +101,15 @@ func NewGHCLIMyPRsFetcher(runner CommandRunner, store api.PRStore, bus api.Publi
 }
 
 // Fetch queries for open PRs authored by the user and persists them.
+// Phase 1: gh search prs for the PR list (supported fields only).
+// Phase 2: gh pr view per PR for statusCheckRollup, reviews, reviewRequests.
 func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 	args := []string{
 		"search", "prs",
 		"--author", f.login,
 		"--state", "open",
 		"--limit", "100",
-		"--json", "id,number,title,state,isDraft,url,createdAt,updatedAt,author,repository,statusCheckRollup,reviews,reviewRequests",
+		"--json", "id,number,title,state,isDraft,url,createdAt,updatedAt,author,repository",
 	}
 
 	out, err := f.runner.Run(ctx, args)
@@ -102,8 +130,13 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 			continue
 		}
 
-		runs := convertStatusChecks(p.StatusCheckRollup)
-		reviews := convertReviews(p.Reviews)
+		detail, err := fetchPRDetail(ctx, f.runner, repo, p.Number, "statusCheckRollup,reviews,reviewRequests")
+		if err != nil {
+			slog.Error("ghcli: pr detail fetch failed, persisting with empty detail", "repo", repo, "number", p.Number, "error", err)
+		}
+
+		runs := convertStatusChecks(detail.StatusCheckRollup)
+		reviews := convertReviews(detail.Reviews)
 
 		prRow := persistence.PullRequest{
 			ID:             p.ID,

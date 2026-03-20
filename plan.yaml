@@ -1666,6 +1666,22 @@ tasks:
   - id: 98
     title: "Add poller lifecycle logging"
     status: done
+
+  - id: 99
+    title: "Fix ghcli fetchers: two-phase fetch (search + pr view)"
+    status: done
+    depends_on: [87, 88]
+    description: >
+      gh search prs does not support statusCheckRollup, reviews, reviewRequests,
+      or commits as JSON fields. Split into two phases: (1) gh search prs with
+      only supported fields for the PR list, (2) gh pr view per PR for detail
+      fields. Remove unsupported fields from ghSearchPR struct. Add ghPRDetail
+      struct and fetchPRDetail helper. Remove ghSearchRQPR (no longer needed).
+      On detail fetch error, persist with empty detail (graceful degradation).
+    testing: >
+      Update StubCommandRunner usage to dispatch search vs view responses.
+      Update test fixtures. Add detail fetch error test. Add detail malformed
+      JSON test. All existing assertions preserved. 100% coverage maintained.
     depends_on: [96]
     description: >
       Add slog.Debug calls for poller lifecycle events: starting (with interval),
