@@ -114,6 +114,15 @@ func TestCommandBar_View_Focused_NoSuggestions(t *testing.T) {
 	}
 }
 
+func TestCommandBar_View_Focused_NoDuplicateCaret(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	v := cb.View()
+	if strings.HasPrefix(v, "> ") {
+		t.Errorf("View() must not start with '> ' when focused (duplicate caret): %q", v)
+	}
+}
+
 func TestCommandBar_View_Focused_WithSuggestions(t *testing.T) {
 	cb := NewCommandBar()
 	focusBar(t, cb)

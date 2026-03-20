@@ -94,6 +94,7 @@ func (c *CommandBar) SetExecutor(e CommandDispatcher) {
 // NewCommandBar creates a new CommandBar.
 func NewCommandBar() *CommandBar {
 	ti := textinput.New()
+	ti.Prompt = ""
 	ti.Placeholder = "/ or : for commands"
 	ti.CharLimit = 256
 	return &CommandBar{
