@@ -1554,7 +1554,7 @@ tasks:
 
   - id: 89
     title: "Implement GHCLIMutator"
-    status: pending
+    status: done
     depends_on: [85]
     description: >
       Implements ui.PRMutator (10 methods), watches.ActionExecutor (5 methods),
