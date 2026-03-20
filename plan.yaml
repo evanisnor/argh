@@ -1521,7 +1521,7 @@ tasks:
 
   - id: 86
     title: "Implement GHCLIAuthVerifier"
-    status: pending
+    status: done
     depends_on: [85]
     description: >
       Implements api.TokenVerifier. Runs gh auth status --hostname github.com
