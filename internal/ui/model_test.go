@@ -63,6 +63,10 @@ func (s *stubSubModel) HasContent() bool {
 	return s.content
 }
 
+func (s *stubSubModel) RowCount() int {
+	return 0
+}
+
 // stubCommandBarOverlay extends stubSubModel to implement CommandBarOverlay,
 // allowing tests to exercise the suggestion overlay path in Model.View().
 type stubCommandBarOverlay struct {
@@ -152,9 +156,9 @@ func TestView_ContainsAllPanelRegions(t *testing.T) {
 
 	regions := []string{
 		"argh",
-		"MY PULL REQUESTS",
-		"REVIEW QUEUE",
-		"WATCHES",
+		"MY PULL REQUESTS [0]",
+		"REVIEW QUEUE [0]",
+		"WATCHES [0]",
 		"DETAIL",
 		"> ",
 	}

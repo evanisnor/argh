@@ -1704,3 +1704,43 @@ tasks:
       initial fetch complete, tick fetch, force poll, stopped.
     testing: >
       slog.Debug calls are side-effect-only. Existing tests cover all code paths.
+
+  # ─── Phase 22: PR Panel Table Layout ───────────────────────────────────────
+
+  - id: 101
+    title: "Add RowCounter interface and include count in panel title"
+    status: done
+    depends_on: [17, 18]
+    description: >
+      Add RowCounter optional interface with RowCount() int to model.go.
+      Modify panelView() to include count in title via type assertion.
+      Update model_test.go stubs and title assertions.
+    testing: >
+      stubSubModel implements RowCount() returning 0; TestView_ContainsAllPanelRegions
+      assertions updated to match "MY PULL REQUESTS [0]" and "REVIEW QUEUE [0]".
+
+  - id: 102
+    title: "Table layout for My PRs panel"
+    status: pending
+    depends_on: [101]
+    description: >
+      Add RowCount() to MyPRsPanel. Remove [N open] from View(). Add renderHeader()
+      with column headers and separators. Rewrite renderRow() to use fixed-width
+      padded columns with flex title. Update panel_prs_test.go accordingly.
+    testing: >
+      TestMyPRsPanel_RowCount table-driven. TestMyPRsPanel_HeaderRow verifies
+      column labels and separators. BadgeCount test updated. Title truncation
+      test width adjusted. All existing content tests still pass.
+
+  - id: 103
+    title: "Table layout for Review Queue panel"
+    status: pending
+    depends_on: [101]
+    description: >
+      Add RowCount() to ReviewQueuePanel. Remove [N waiting] from View(). Add
+      renderHeader() with column headers and separators. Rewrite renderRow() to
+      use fixed-width padded columns with flex title. Update panel_reviews_test.go.
+    testing: >
+      TestReviewQueuePanel_RowCount table-driven. TestReviewQueuePanel_HeaderRow
+      verifies column labels and separators. BadgeCount test updated. Title
+      truncation test width adjusted. All existing content tests still pass.

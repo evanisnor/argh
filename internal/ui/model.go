@@ -83,6 +83,13 @@ type CommandBarOverlay interface {
 	SuggestionsView() string
 }
 
+// RowCounter is the optional interface implemented by panels that can report
+// the number of data rows they contain. The root model uses a type assertion
+// to append the count to the panel title, e.g. "MY PULL REQUESTS [3]".
+type RowCounter interface {
+	RowCount() int
+}
+
 // PRSelector is the optional interface implemented by panels that hold a list
 // of pull requests with a cursor. The root model uses a type assertion to check
 // for this when handling the Enter key so that the detail modal is only opened
@@ -841,6 +848,9 @@ func (m Model) headerView() string {
 // excluding border rows). When contentHeight is 0 no height constraint is
 // applied and the panel renders at natural height.
 func (m Model) panelView(title string, sub SubModel, focused bool, contentHeight int) string {
+	if rc, ok := sub.(RowCounter); ok {
+		title = fmt.Sprintf("%s [%d]", title, rc.RowCount())
+	}
 	border := m.theme.UnfocusedBorder
 	if focused {
 		border = m.theme.FocusedBorder
