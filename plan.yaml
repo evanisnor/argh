@@ -1509,7 +1509,7 @@ tasks:
 
   - id: 85
     title: "Create internal/ghcli/runner.go — CommandRunner interface"
-    status: pending
+    status: done
     depends_on: [84]
     description: >
       New package internal/ghcli/. Define CommandRunner interface with Run method.
