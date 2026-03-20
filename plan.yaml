@@ -1544,7 +1544,7 @@ tasks:
 
   - id: 88
     title: "Implement GHCLIReviewQueueFetcher"
-    status: pending
+    status: done
     depends_on: [83, 85, 87]
     description: >
       Implements Fetcher interface. Runs gh search prs for review-requested PRs.
