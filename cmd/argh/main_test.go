@@ -160,6 +160,13 @@ func happyDeps(t *testing.T) tuiDeps {
 		authenticate: func(_ context.Context) (*api.Credentials, error) {
 			return &api.Credentials{Token: "test-token", Login: "testuser"}, nil
 		},
+		runSetup: nil, // not called in happy path
+		saveToken: func(_ string) error {
+			return nil
+		},
+		deleteToken: func() error {
+			return nil
+		},
 		loadConfig: func() (config.Config, error) {
 			return config.Defaults(), nil
 		},
@@ -179,16 +186,125 @@ func happyDeps(t *testing.T) tuiDeps {
 	}
 }
 
-func TestRunTUI_AuthFailure(t *testing.T) {
+func TestRunTUI_TokenNotFound_SetupSucceeds(t *testing.T) {
+	authCalls := 0
 	deps := happyDeps(t)
 	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
-		return nil, errors.New("no gh auth")
+		authCalls++
+		if authCalls == 1 {
+			return nil, config.ErrTokenNotFound
+		}
+		return &api.Credentials{Token: "new-token", Login: "testuser"}, nil
+	}
+	deps.runSetup = func(_ context.Context) (string, bool, error) {
+		return "new-token", false, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := runTUI(ctx, "test", deps)
-	if err == nil || !strings.Contains(err.Error(), "authentication") {
-		t.Errorf("runTUI() err = %v, want authentication error", err)
+	if err != nil {
+		t.Errorf("runTUI() err = %v, want nil", err)
+	}
+}
+
+func TestRunTUI_TokenNotFound_SetupQuit(t *testing.T) {
+	deps := happyDeps(t)
+	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
+		return nil, config.ErrTokenNotFound
+	}
+	deps.runSetup = func(_ context.Context) (string, bool, error) {
+		return "", true, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runTUI(ctx, "test", deps)
+	if err != nil {
+		t.Errorf("runTUI() err = %v, want nil (user quit)", err)
+	}
+}
+
+func TestRunTUI_TokenNotFound_SetupError(t *testing.T) {
+	deps := happyDeps(t)
+	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
+		return nil, config.ErrTokenNotFound
+	}
+	deps.runSetup = func(_ context.Context) (string, bool, error) {
+		return "", false, errors.New("terminal crashed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runTUI(ctx, "test", deps)
+	if err == nil || !strings.Contains(err.Error(), "setup") {
+		t.Errorf("runTUI() err = %v, want setup error", err)
+	}
+}
+
+func TestRunTUI_TokenNotFound_SaveError(t *testing.T) {
+	deps := happyDeps(t)
+	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
+		return nil, config.ErrTokenNotFound
+	}
+	deps.runSetup = func(_ context.Context) (string, bool, error) {
+		return "new-token", false, nil
+	}
+	deps.saveToken = func(_ string) error {
+		return errors.New("disk full")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runTUI(ctx, "test", deps)
+	if err == nil || !strings.Contains(err.Error(), "saving token") {
+		t.Errorf("runTUI() err = %v, want saving token error", err)
+	}
+}
+
+func TestRunTUI_TokenNotFound_ReauthFails(t *testing.T) {
+	authCalls := 0
+	deps := happyDeps(t)
+	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
+		authCalls++
+		if authCalls == 1 {
+			return nil, config.ErrTokenNotFound
+		}
+		return nil, errors.New("still broken")
+	}
+	deps.runSetup = func(_ context.Context) (string, bool, error) {
+		return "new-token", false, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runTUI(ctx, "test", deps)
+	if err == nil || !strings.Contains(err.Error(), "authentication after setup") {
+		t.Errorf("runTUI() err = %v, want authentication after setup error", err)
+	}
+}
+
+func TestRunTUI_InvalidToken_RepromptsSetup(t *testing.T) {
+	authCalls := 0
+	deleteCalled := false
+	deps := happyDeps(t)
+	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {
+		authCalls++
+		if authCalls == 1 {
+			return nil, errors.New("401 Unauthorized")
+		}
+		return &api.Credentials{Token: "new-token", Login: "testuser"}, nil
+	}
+	deps.deleteToken = func() error {
+		deleteCalled = true
+		return nil
+	}
+	deps.runSetup = func(_ context.Context) (string, bool, error) {
+		return "new-token", false, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runTUI(ctx, "test", deps)
+	if err != nil {
+		t.Errorf("runTUI() err = %v, want nil", err)
+	}
+	if !deleteCalled {
+		t.Error("expected deleteToken to be called for invalid token")
 	}
 }
 
@@ -691,8 +807,42 @@ func TestProductionDeps_Authenticate(t *testing.T) {
 	deps := productionDeps()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	// gh auth token may succeed or fail; we just need the closure body covered.
+	// Token may or may not exist; we just need the closure body covered.
 	_, _ = deps.authenticate(ctx)
+}
+
+func TestProductionDeps_RunSetup(t *testing.T) {
+	deps := productionDeps()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// The setup program will fail immediately with a cancelled context.
+	_, _, _ = deps.runSetup(ctx)
+}
+
+func TestSetupVerify(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// Just exercise the function for coverage; cancelled context → error.
+	_, _ = setupVerify(ctx, "ghp_coverage")
+}
+
+func TestSetupRunProgram(t *testing.T) {
+	// Exercise the function with a model that quits immediately.
+	_, _ = setupRunProgram(immediateQuitModel{})
+}
+
+func TestProductionDeps_SaveToken(t *testing.T) {
+	deps := productionDeps()
+	// SaveToken writes to the real config dir; just exercise the closure.
+	_ = deps.saveToken("ghp_test_coverage")
+	// Clean up by deleting the token.
+	_ = deps.deleteToken()
+}
+
+func TestProductionDeps_DeleteToken(t *testing.T) {
+	deps := productionDeps()
+	// Deleting a non-existent token is a no-op.
+	_ = deps.deleteToken()
 }
 
 // ── tuiLauncher default body ──────────────────────────────────────────────────

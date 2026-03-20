@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -141,6 +142,9 @@ func runStatus(
 // sequence can be exercised in tests without real GitHub credentials or disk I/O.
 type tuiDeps struct {
 	authenticate func(ctx context.Context) (*api.Credentials, error)
+	runSetup     func(ctx context.Context) (token string, quit bool, err error)
+	saveToken    func(token string) error
+	deleteToken  func() error
 	loadConfig   func() (config.Config, error)
 	openDB       func() (*persistence.DB, error)
 	auditLogPath func() (string, error)
@@ -149,11 +153,33 @@ type tuiDeps struct {
 	runProgram   func(m tea.Model) error
 }
 
+// setupVerify and setupRunProgram are the functions used by the setup modal in
+// production. They are variables so tests can exercise them for coverage.
+var setupVerify = func(ctx context.Context, token string) (string, error) {
+	return (&api.GitHubTokenVerifier{}).Verify(ctx, token)
+}
+
+var setupRunProgram = func(m tea.Model) (tea.Model, error) {
+	return tea.NewProgram(m, tea.WithAltScreen()).Run()
+}
+
 // productionDeps returns a tuiDeps wired to real OS resources.
 func productionDeps() tuiDeps {
 	return tuiDeps{
 		authenticate: func(ctx context.Context) (*api.Credentials, error) {
 			return api.Authenticate(ctx, config.OSFilesystem{}, &api.GitHubTokenVerifier{})
+		},
+		runSetup: func(ctx context.Context) (string, bool, error) {
+			return ui.RunSetup(ctx, ui.SetupDeps{
+				Verify:     setupVerify,
+				RunProgram: setupRunProgram,
+			})
+		},
+		saveToken: func(token string) error {
+			return config.SaveToken(config.OSFilesystem{}, token)
+		},
+		deleteToken: func() error {
+			return config.DeleteToken(config.OSFilesystem{})
 		},
 		loadConfig: func() (config.Config, error) {
 			return config.Load(config.OSFilesystem{})
@@ -220,7 +246,27 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 
 	creds, err := deps.authenticate(ctx)
 	if err != nil {
-		return fmt.Errorf("authentication: %w", err)
+		needsSetup := errors.Is(err, config.ErrTokenNotFound)
+		if !needsSetup {
+			_ = deps.deleteToken()
+			needsSetup = true
+		}
+		if needsSetup {
+			token, quit, setupErr := deps.runSetup(ctx)
+			if setupErr != nil {
+				return fmt.Errorf("setup: %w", setupErr)
+			}
+			if quit {
+				return nil
+			}
+			if err := deps.saveToken(token); err != nil {
+				return fmt.Errorf("saving token: %w", err)
+			}
+			creds, err = deps.authenticate(ctx)
+			if err != nil {
+				return fmt.Errorf("authentication after setup: %w", err)
+			}
+		}
 	}
 
 	cfg, err := deps.loadConfig()

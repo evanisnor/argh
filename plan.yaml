@@ -1287,7 +1287,7 @@ tasks:
 
   - id: 57
     title: "Wire PAT auth into main.go"
-    status: pending
+    status: done
     depends_on: [55, 56]
     description: >
       Update tuiDeps with runSetup, saveToken, deleteToken fields.
