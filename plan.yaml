@@ -1721,7 +1721,7 @@ tasks:
 
   - id: 102
     title: "Table layout for My PRs panel"
-    status: pending
+    status: done
     depends_on: [101]
     description: >
       Add RowCount() to MyPRsPanel. Remove [N open] from View(). Add renderHeader()

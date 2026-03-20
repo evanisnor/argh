@@ -94,14 +94,36 @@ func (p *MyPRsPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	return p, nil
 }
 
+// RowCount returns the number of PR rows in the panel.
+func (p *MyPRsPanel) RowCount() int { return len(p.rows) }
+
+// Column widths for the My PRs table layout.
+const (
+	prColSID     = 1
+	prColSpace   = 1
+	prColWatch   = 2
+	prColRepo    = 14
+	prColNumber  = 5
+	prColStatus  = 8
+	prColCI      = 2
+	prColReviews = 5
+	prColComment = 2
+	prColAge     = 3
+	prColSep     = 3 // " │ "
+	prNumSeps    = 8
+	prFixedWidth = prColSID + prColSpace + prColWatch + prColRepo + prColNumber +
+		prColStatus + prColCI + prColReviews + prColComment + prColAge +
+		prNumSeps*prColSep
+)
+
 // View renders the panel content (title/border is added by the root model).
 func (p *MyPRsPanel) View() string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("[%d open]\n", len(p.rows)))
 	if len(p.rows) == 0 {
-		sb.WriteString("  (no open pull requests)")
-		return sb.String()
+		return "  (no open pull requests)"
 	}
+	var sb strings.Builder
+	sb.WriteString(p.renderHeader())
+	sb.WriteString("\n")
 	now := p.clock.Now()
 	for i, row := range p.rows {
 		sb.WriteString(p.renderRow(row, now, i == p.cursor))
@@ -110,6 +132,25 @@ func (p *MyPRsPanel) View() string {
 		}
 	}
 	return sb.String()
+}
+
+// renderHeader builds the column header line for the My PRs table.
+func (p *MyPRsPanel) renderHeader() string {
+	sep := " │ "
+	titleWidth := p.titleWidth()
+	header := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s",
+		prColSID, "",
+		prColWatch, "",
+		prColRepo, "REPO", sep,
+		prColNumber, "#", sep,
+		titleWidth, "TITLE", sep,
+		prColStatus, "●", sep,
+		prColCI, "⚙", sep,
+		prColReviews, "✓✗", sep,
+		prColComment, "💬", sep,
+		prColAge, "⏱",
+	)
+	return lipgloss.NewStyle().Faint(true).Render(header)
 }
 
 // SelectedPR returns the PullRequest currently under the cursor, or nil when
@@ -181,9 +222,19 @@ func (p *MyPRsPanel) refresh() error {
 	return nil
 }
 
-// renderRow formats a single PR row as a string with appropriate styles.
-// The title is truncated with a trailing "…" when p.width is set and the full
-// row text would exceed the allocated width.
+// titleWidth returns the flex title column width based on the panel's allocated width.
+func (p *MyPRsPanel) titleWidth() int {
+	if p.width <= 0 {
+		return 40 // generous default before first resize
+	}
+	w := p.width - prFixedWidth
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+// renderRow formats a single PR row as a table row with fixed-width columns.
 func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 	sid := row.sessionID
 	if sid == "" {
@@ -200,35 +251,43 @@ func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
 		title = "[draft] " + title
 	}
 
-	// Build the row without the title first so we know the fixed-width parts.
-	prefix := fmt.Sprintf("%s %s %s #%d ", sid, watchIcon, row.pr.Repo, row.pr.Number)
-	suffix := fmt.Sprintf("  %s  %s  %s  %d  %s",
-		prStatusDisplay(row.pr.Status, row.pr.Draft),
-		prCIDisplay(row.pr.CIState),
-		prReviewDisplay(row.approvedCount, row.changesCount),
-		row.commentCount,
-		formatAge(now.Sub(row.pr.LastActivityAt)),
-	)
-	title = truncateTitle(title, p.width, len(prefix)+len(suffix))
+	sep := " │ "
+	titleWidth := p.titleWidth()
+	title = truncateTitle(title, titleWidth, 0)
+	// Pad title to fixed width.
+	titleRunes := []rune(title)
+	if len(titleRunes) < titleWidth {
+		title = title + strings.Repeat(" ", titleWidth-len(titleRunes))
+	}
 
-	text := prefix + title + suffix
+	text := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s",
+		prColSID, sid,
+		prColWatch, watchIcon,
+		prColRepo, truncateTitle(row.pr.Repo, prColRepo, 0), sep,
+		prColNumber, fmt.Sprintf("#%d", row.pr.Number), sep,
+		title, sep,
+		prColStatus, prStatusDisplay(row.pr.Status, row.pr.Draft), sep,
+		prColCI, prCIDisplay(row.pr.CIState), sep,
+		prColReviews, prReviewDisplay(row.approvedCount, row.changesCount), sep,
+		prColComment, fmt.Sprintf("%d", row.commentCount), sep,
+		prColAge, formatAge(now.Sub(row.pr.LastActivityAt)),
+	)
 
 	style := lipgloss.NewStyle()
 	if row.pr.Draft {
 		style = style.Faint(true)
 	}
-	// Color based on state; higher-priority states override lower ones.
 	if row.pr.Status == "approved" || row.pr.CIState == "passing" || row.pr.CIState == "success" {
-		style = style.Foreground(lipgloss.Color("#4CAF50")) // green: approved/passing
+		style = style.Foreground(lipgloss.Color("#4CAF50"))
 	}
 	if row.pr.CIState == "running" || row.pr.CIState == "in_progress" || row.pr.CIState == "pending" {
-		style = style.Foreground(lipgloss.Color("#FFC107")) // yellow: pending/waiting
+		style = style.Foreground(lipgloss.Color("#FFC107"))
 	}
 	if row.changesCount > 0 {
-		style = style.Foreground(lipgloss.Color("#FFA07A")) // orange: changes requested
+		style = style.Foreground(lipgloss.Color("#FFA07A"))
 	}
 	if row.pr.CIState == "failing" || row.pr.CIState == "failure" {
-		style = style.Foreground(lipgloss.Color("#FF6B6B")) // red: CI failing (highest priority)
+		style = style.Foreground(lipgloss.Color("#FF6B6B"))
 	}
 	if p.flashing[row.pr.ID] {
 		style = style.Bold(true)

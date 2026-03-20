@@ -231,16 +231,16 @@ func TestMyPRsPanel_WatchIcon(t *testing.T) {
 	})
 }
 
-// TestMyPRsPanel_BadgeCount verifies the "[N open]" badge matches the row count.
-func TestMyPRsPanel_BadgeCount(t *testing.T) {
+// TestMyPRsPanel_RowCount verifies RowCount() returns the number of PR rows.
+func TestMyPRsPanel_RowCount(t *testing.T) {
 	tests := []struct {
-		name     string
-		prCount  int
-		wantBadge string
+		name    string
+		prCount int
+		want    int
 	}{
-		{"zero PRs", 0, "[0 open]"},
-		{"one PR", 1, "[1 open]"},
-		{"three PRs", 3, "[3 open]"},
+		{"zero PRs", 0, 0},
+		{"one PR", 1, 1},
+		{"three PRs", 3, 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -255,11 +255,32 @@ func TestMyPRsPanel_BadgeCount(t *testing.T) {
 				reader.sessionIDs[url] = fmt.Sprintf("s%d", i)
 			}
 			panel := makePanel(reader)
-			view := panel.View()
-			if !strings.Contains(view, tt.wantBadge) {
-				t.Errorf("expected %q in view, got:\n%s", tt.wantBadge, view)
+			if got := panel.RowCount(); got != tt.want {
+				t.Errorf("RowCount() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMyPRsPanel_HeaderRow verifies the header line contains column labels and
+// separator characters.
+func TestMyPRsPanel_HeaderRow(t *testing.T) {
+	reader := newStubPRReader()
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", Repo: "repo", Number: 1, Title: "PR",
+			Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+	}
+	reader.sessionIDs["https://gh/1"] = "a"
+	panel := makePanel(reader)
+	view := panel.View()
+
+	for _, label := range []string{"REPO", "#", "TITLE", "●", "⚙", "✓✗", "💬", "⏱"} {
+		if !strings.Contains(view, label) {
+			t.Errorf("header missing label %q in view:\n%s", label, view)
+		}
+	}
+	if !strings.Contains(view, "│") {
+		t.Errorf("header missing separator │ in view:\n%s", view)
 	}
 }
 
