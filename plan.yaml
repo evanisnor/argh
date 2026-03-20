@@ -1734,7 +1734,7 @@ tasks:
 
   - id: 103
     title: "Table layout for Review Queue panel"
-    status: pending
+    status: done
     depends_on: [101]
     description: >
       Add RowCount() to ReviewQueuePanel. Remove [N waiting] from View(). Add

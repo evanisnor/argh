@@ -228,16 +228,16 @@ func TestReviewQueuePanel_SortedByUrgencyDescending(t *testing.T) {
 	}
 }
 
-// TestReviewQueuePanel_BadgeCount verifies the "[N waiting]" badge matches the row count.
-func TestReviewQueuePanel_BadgeCount(t *testing.T) {
+// TestReviewQueuePanel_RowCount verifies RowCount() returns the number of review rows.
+func TestReviewQueuePanel_RowCount(t *testing.T) {
 	tests := []struct {
-		name      string
-		prCount   int
-		wantBadge string
+		name    string
+		prCount int
+		want    int
 	}{
-		{"zero PRs", 0, "[0 waiting]"},
-		{"one PR", 1, "[1 waiting]"},
-		{"three PRs", 3, "[3 waiting]"},
+		{"zero PRs", 0, 0},
+		{"one PR", 1, 1},
+		{"three PRs", 3, 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -252,11 +252,32 @@ func TestReviewQueuePanel_BadgeCount(t *testing.T) {
 				reader.sessionIDs[url] = fmt.Sprintf("s%d", i)
 			}
 			panel := makeReviewPanel(reader, "")
-			view := panel.View()
-			if !strings.Contains(view, tt.wantBadge) {
-				t.Errorf("expected %q in view, got:\n%s", tt.wantBadge, view)
+			if got := panel.RowCount(); got != tt.want {
+				t.Errorf("RowCount() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestReviewQueuePanel_HeaderRow verifies the header line contains column labels
+// and separator characters.
+func TestReviewQueuePanel_HeaderRow(t *testing.T) {
+	reader := newStubPRReader()
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", Repo: "repo", Number: 1, Title: "PR",
+			Status: "open", URL: "https://gh/1", LastActivityAt: t0, CreatedAt: t0},
+	}
+	reader.sessionIDs["https://gh/1"] = "a"
+	panel := makeReviewPanel(reader, "")
+	view := panel.View()
+
+	for _, label := range []string{"REPO", "#", "TITLE", "@", "⚙", "⏱", "!!"} {
+		if !strings.Contains(view, label) {
+			t.Errorf("header missing label %q in view:\n%s", label, view)
+		}
+	}
+	if !strings.Contains(view, "│") {
+		t.Errorf("header missing separator │ in view:\n%s", view)
 	}
 }
 

@@ -86,14 +86,35 @@ func (p *ReviewQueuePanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	return p, nil
 }
 
+// RowCount returns the number of review queue rows in the panel.
+func (p *ReviewQueuePanel) RowCount() int { return len(p.rows) }
+
+// Column widths for the Review Queue table layout.
+const (
+	rqColSID     = 1
+	rqColSpace   = 1
+	rqColWatch   = 2
+	rqColRepo    = 14
+	rqColNumber  = 5
+	rqColAuthor  = 12
+	rqColCI      = 2
+	rqColAge     = 3
+	rqColUrgency = 3
+	rqColSep     = 3 // " │ "
+	rqNumSeps    = 7
+	rqFixedWidth = rqColSID + rqColSpace + rqColWatch + rqColRepo + rqColNumber +
+		rqColAuthor + rqColCI + rqColAge + rqColUrgency +
+		rqNumSeps*rqColSep
+)
+
 // View renders the panel content.
 func (p *ReviewQueuePanel) View() string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("[%d waiting]\n", len(p.rows)))
 	if len(p.rows) == 0 {
-		sb.WriteString("  (no reviews requested)")
-		return sb.String()
+		return "  (no reviews requested)"
 	}
+	var sb strings.Builder
+	sb.WriteString(p.renderHeader())
+	sb.WriteString("\n")
 	now := p.clock.Now()
 	for i, row := range p.rows {
 		sb.WriteString(p.renderRow(row, now, i == p.cursor))
@@ -102,6 +123,24 @@ func (p *ReviewQueuePanel) View() string {
 		}
 	}
 	return sb.String()
+}
+
+// renderHeader builds the column header line for the Review Queue table.
+func (p *ReviewQueuePanel) renderHeader() string {
+	sep := " │ "
+	titleWidth := p.titleWidth()
+	header := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s%s%-*s",
+		rqColSID, "",
+		rqColWatch, "",
+		rqColRepo, "REPO", sep,
+		rqColNumber, "#", sep,
+		titleWidth, "TITLE", sep,
+		rqColAuthor, "@", sep,
+		rqColCI, "⚙", sep,
+		rqColAge, "⏱", sep,
+		rqColUrgency, "!!",
+	)
+	return lipgloss.NewStyle().Faint(true).Render(header)
 }
 
 // SelectedPR returns the PullRequest currently under the cursor, or nil when
@@ -248,9 +287,19 @@ func urgencyDisplay(score int) string {
 	}
 }
 
-// renderRow formats a single review queue row as a string with appropriate styles.
-// The title is truncated with a trailing "…" when p.width is set and the full
-// row text would exceed the allocated width.
+// titleWidth returns the flex title column width based on the panel's allocated width.
+func (p *ReviewQueuePanel) titleWidth() int {
+	if p.width <= 0 {
+		return 40 // generous default before first resize
+	}
+	w := p.width - rqFixedWidth
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+// renderRow formats a single review queue row as a table row with fixed-width columns.
 func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool) string {
 	sid := row.sessionID
 	if sid == "" {
@@ -262,16 +311,27 @@ func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool)
 		watchIcon = "👁"
 	}
 
-	prefix := fmt.Sprintf("%s %s %s #%d ", sid, watchIcon, row.pr.Repo, row.pr.Number)
-	suffix := fmt.Sprintf("  @%s  %s  %s  %s",
-		row.pr.Author,
-		prCIDisplay(row.pr.CIState),
-		formatAge(now.Sub(row.pr.LastActivityAt)),
-		urgencyDisplay(row.urgency),
-	)
-	title := truncateTitle(row.pr.Title, p.width, len(prefix)+len(suffix))
+	sep := " │ "
+	titleWidth := p.titleWidth()
+	title := truncateTitle(row.pr.Title, titleWidth, 0)
+	titleRunes := []rune(title)
+	if len(titleRunes) < titleWidth {
+		title = title + strings.Repeat(" ", titleWidth-len(titleRunes))
+	}
 
-	text := prefix + title + suffix
+	author := "@" + row.pr.Author
+
+	text := fmt.Sprintf("%*s %*s %-*s%s%-*s%s%s%s%-*s%s%-*s%s%-*s%s%-*s",
+		rqColSID, sid,
+		rqColWatch, watchIcon,
+		rqColRepo, truncateTitle(row.pr.Repo, rqColRepo, 0), sep,
+		rqColNumber, fmt.Sprintf("#%d", row.pr.Number), sep,
+		title, sep,
+		rqColAuthor, truncateTitle(author, rqColAuthor, 0), sep,
+		rqColCI, prCIDisplay(row.pr.CIState), sep,
+		rqColAge, formatAge(now.Sub(row.pr.LastActivityAt)), sep,
+		rqColUrgency, urgencyDisplay(row.urgency),
+	)
 
 	style := lipgloss.NewStyle()
 	if row.isLastReviewer {
