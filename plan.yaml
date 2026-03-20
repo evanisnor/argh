@@ -1238,7 +1238,7 @@ tasks:
 
   - id: 53
     title: "Add PAT storage functions to config package"
-    status: pending
+    status: done
     depends_on: [52]
     description: >
       New files: internal/config/token.go and internal/config/token_test.go.
