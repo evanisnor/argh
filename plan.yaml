@@ -1744,3 +1744,43 @@ tasks:
       TestReviewQueuePanel_RowCount table-driven. TestReviewQueuePanel_HeaderRow
       verifies column labels and separators. BadgeCount test updated. Title
       truncation test width adjusted. All existing content tests still pass.
+
+  # ─── Phase 23: Display-Width-Correct Table Layout ───────────────────────────
+
+  - id: 104
+    title: "Create shared rowBuilder with display-width-correct layout"
+    status: done
+    depends_on: [102, 103]
+    description: >
+      Create internal/ui/tablerow.go with columnDef and rowBuilder types.
+      Uses ansi.Truncate for truncation and lipgloss.Width for measurement.
+      Manual space-padding to exact display-width. Handles flex columns.
+      Create internal/ui/tablerow_test.go with tests for alignment, flex,
+      emoji cells, truncation, empty cells, zero-width fallback.
+      Promote charmbracelet/x/ansi from indirect to direct in go.mod.
+    testing: >
+      Table-driven tests for: basic alignment, flex column, emoji cells,
+      truncation with ellipsis, empty cells, zero-width fallback.
+
+  - id: 105
+    title: "Refactor My PRs panel to use rowBuilder"
+    status: pending
+    depends_on: [104]
+    description: >
+      Replace renderHeader/renderRow in panel_prs.go with rowBuilder calls.
+      Remove titleWidth() method. Define column specs matching current layout.
+      Update truncateTitle to use display-width via ansi.Truncate.
+      Update TestTruncateTitle with emoji test case.
+    testing: >
+      All existing panel_prs_test.go tests pass. TestTruncateTitle updated
+      for display-width semantics with emoji case added.
+
+  - id: 106
+    title: "Refactor Review Queue panel to use rowBuilder"
+    status: pending
+    depends_on: [104]
+    description: >
+      Replace renderHeader/renderRow in panel_reviews.go with rowBuilder calls.
+      Remove titleWidth() method. Define column specs matching current layout.
+    testing: >
+      All existing panel_reviews_test.go tests pass unchanged.
