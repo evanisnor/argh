@@ -61,10 +61,10 @@ func defaultMarkdownRenderer() (MarkdownRenderer, error) {
 	return &glamourRenderer{r: r}, nil
 }
 
-// DetailPane is the collapsible side/bottom pane that shows the focused PR's
-// full detail: description, check runs, review threads, watches, and timeline.
+// DetailPane is the collapsible modal pane that shows the focused PR's full
+// detail: description, check runs, review threads, watches, and timeline.
+// Visibility is controlled entirely by the root Model's detailOpen field.
 type DetailPane struct {
-	visible       bool
 	pr            persistence.PullRequest
 	checkRuns     []persistence.CheckRun
 	threads       []persistence.ReviewThread // all threads (resolved + open)
@@ -89,16 +89,10 @@ func NewDetailPane(resolver ThreadResolver) *DetailPane {
 func newDetailPaneWithRenderer(resolver ThreadResolver, r MarkdownRenderer) *DetailPane {
 	vp := viewport.New(80, 20)
 	return &DetailPane{
-		visible:    false,
 		viewport:   vp,
 		resolver:   resolver,
 		mdRenderer: r,
 	}
-}
-
-// Toggle flips the visible state of the pane.
-func (p *DetailPane) Toggle() {
-	p.visible = !p.visible
 }
 
 // Init satisfies tea.Model (no initial commands needed).
@@ -109,6 +103,12 @@ func (p *DetailPane) Init() tea.Cmd {
 // Update handles Bubble Tea messages.
 func (p *DetailPane) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	switch m := msg.(type) {
+	case ResizeMsg:
+		p.viewport.Width = m.Width
+		p.viewport.Height = m.Height
+		p.refreshViewport()
+		return p, nil
+
 	case PRFocusedMsg:
 		p.pr = m.PR
 		p.checkRuns = m.CheckRuns
@@ -155,11 +155,9 @@ func (p *DetailPane) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	return p, nil
 }
 
-// View renders the pane. Returns an empty string when the pane is not visible.
+// View renders the viewport content. The pane's visibility is controlled by
+// the root Model's detailOpen field, not by this method.
 func (p *DetailPane) View() string {
-	if !p.visible {
-		return ""
-	}
 	return p.viewport.View()
 }
 

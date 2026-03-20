@@ -71,35 +71,33 @@ func sendMsg(p *DetailPane, msg tea.Msg) *DetailPane {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-// TestDetailPane_CollapsedByDefault verifies the pane is not visible initially.
-func TestDetailPane_CollapsedByDefault(t *testing.T) {
-	p := makeDetailPane(nil, "")
-	if p.visible {
-		t.Error("pane should be collapsed by default")
-	}
-}
+// TestDetailPane_ViewRendersContent verifies View() returns the viewport content
+// (the pane always renders; visibility is controlled by the root model).
+func TestDetailPane_ViewRendersContent(t *testing.T) {
+	const markdownOut = "rendered markdown output"
+	p := makeDetailPane(nil, markdownOut)
 
-// TestDetailPane_ViewEmptyWhenNotVisible verifies View() returns empty string when hidden.
-func TestDetailPane_ViewEmptyWhenNotVisible(t *testing.T) {
-	p := makeDetailPane(nil, "rendered markdown")
+	pr := makePR("pr1", "My PR Title")
+	p = sendMsg(p, makeFocusMsg(pr, nil))
+
 	view := p.View()
-	if view != "" {
-		t.Errorf("View() should be empty when not visible, got: %q", view)
+	if !strings.Contains(view, markdownOut) {
+		t.Errorf("View() should contain rendered markdown %q, got:\n%s", markdownOut, view)
 	}
 }
 
-// TestDetailPane_Toggle verifies Toggle() flips visibility.
-func TestDetailPane_Toggle(t *testing.T) {
+// TestDetailPane_ResizeMsg verifies that a ResizeMsg updates the viewport
+// dimensions used by the detail pane.
+func TestDetailPane_ResizeMsg(t *testing.T) {
 	p := makeDetailPane(nil, "")
 
-	p.Toggle()
-	if !p.visible {
-		t.Error("pane should be visible after Toggle()")
-	}
+	p = sendMsg(p, ResizeMsg{Width: 60, Height: 18})
 
-	p.Toggle()
-	if p.visible {
-		t.Error("pane should be hidden after second Toggle()")
+	if p.viewport.Width != 60 {
+		t.Errorf("viewport.Width = %d, want 60", p.viewport.Width)
+	}
+	if p.viewport.Height != 18 {
+		t.Errorf("viewport.Height = %d, want 18", p.viewport.Height)
 	}
 }
 
@@ -142,7 +140,6 @@ func TestDetailPane_EnterAndPKeysToggleViaModel(t *testing.T) {
 func TestDetailPane_PRDescriptionRenderedAsMarkdown(t *testing.T) {
 	const markdownOut = "**rendered markdown output**"
 	p := makeDetailPane(nil, markdownOut)
-	p.visible = true
 
 	pr := makePR("pr1", "My PR Title")
 	p = sendMsg(p, makeFocusMsg(pr, nil))
@@ -157,7 +154,6 @@ func TestDetailPane_PRDescriptionRenderedAsMarkdown(t *testing.T) {
 func TestDetailPane_MarkdownRendererError(t *testing.T) {
 	md := &stubMarkdownRenderer{err: errors.New("render failed")}
 	p := newDetailPaneWithRenderer(nil, md)
-	p.visible = true
 
 	pr := makePR("pr1", "My Raw Title")
 	p = sendMsg(p, makeFocusMsg(pr, nil))
@@ -171,7 +167,6 @@ func TestDetailPane_MarkdownRendererError(t *testing.T) {
 // TestDetailPane_NoThreads_NNavIsNoop verifies n/N are no-ops when no threads.
 func TestDetailPane_NoThreads_NNavIsNoop(t *testing.T) {
 	p := makeDetailPane(nil, "")
-	p.visible = true
 	p = sendMsg(p, makeFocusMsg(makePR("pr1", "PR"), nil))
 
 	before := p.currentThread
@@ -191,7 +186,6 @@ func TestDetailPane_NoThreads_NNavIsNoop(t *testing.T) {
 // threads only (resolved threads are excluded) and wraps around.
 func TestDetailPane_NNavigation_CyclesOpenThreads(t *testing.T) {
 	p := makeDetailPane(nil, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{
 		makeThread("t1", "file.go", false), // open
@@ -231,7 +225,6 @@ func TestDetailPane_NNavigation_CyclesOpenThreads(t *testing.T) {
 // through open threads and wraps around.
 func TestDetailPane_NUpperNavigation_CyclesBackward(t *testing.T) {
 	p := makeDetailPane(nil, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{
 		makeThread("t1", "a.go", false),
@@ -258,7 +251,6 @@ func TestDetailPane_NUpperNavigation_CyclesBackward(t *testing.T) {
 func TestDetailPane_MarkResolved_CallsResolver(t *testing.T) {
 	resolver := &stubThreadResolver{}
 	p := makeDetailPane(resolver, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{
 		makeThread("thread-abc", "file.go", false),
@@ -289,7 +281,6 @@ func TestDetailPane_MarkResolved_CallsResolver(t *testing.T) {
 func TestDetailPane_MarkResolved_ResolverError(t *testing.T) {
 	resolver := &stubThreadResolver{err: errors.New("network error")}
 	p := makeDetailPane(resolver, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{makeThread("t1", "f.go", false)}
 	p = sendMsg(p, makeFocusMsg(makePR("pr1", "PR"), threads))
@@ -308,7 +299,6 @@ func TestDetailPane_MarkResolved_ResolverError(t *testing.T) {
 // TestDetailPane_MarkResolved_NilResolver is a no-op when resolver is nil.
 func TestDetailPane_MarkResolved_NilResolver(t *testing.T) {
 	p := makeDetailPane(nil, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{makeThread("t1", "f.go", false)}
 	p = sendMsg(p, makeFocusMsg(makePR("pr1", "PR"), threads))
@@ -324,7 +314,6 @@ func TestDetailPane_MarkResolved_NilResolver(t *testing.T) {
 func TestDetailPane_ThreadResolvedMsg_DisappearsFromNav(t *testing.T) {
 	resolver := &stubThreadResolver{}
 	p := makeDetailPane(resolver, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{
 		makeThread("t1", "a.go", false),
@@ -351,7 +340,6 @@ func TestDetailPane_ThreadResolvedMsg_DisappearsFromNav(t *testing.T) {
 // when the resolved thread was the last in the list.
 func TestDetailPane_ThreadResolvedMsg_ClampsIndex(t *testing.T) {
 	p := makeDetailPane(nil, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{
 		makeThread("t1", "a.go", false),
@@ -377,7 +365,6 @@ func TestDetailPane_ThreadResolvedMsg_ClampsIndex(t *testing.T) {
 // all threads become resolved.
 func TestDetailPane_ThreadResolvedMsg_AllResolved(t *testing.T) {
 	p := makeDetailPane(nil, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{makeThread("t1", "a.go", false)}
 	p = sendMsg(p, makeFocusMsg(makePR("pr1", "PR"), threads))
@@ -394,7 +381,6 @@ func TestDetailPane_ThreadResolvedMsg_AllResolved(t *testing.T) {
 // TestDetailPane_CheckRunsInView verifies check runs appear in the rendered view.
 func TestDetailPane_CheckRunsInView(t *testing.T) {
 	p := makeDetailPane(nil, "md")
-	p.visible = true
 
 	msg := PRFocusedMsg{
 		PR: makePR("pr1", "PR"),
@@ -417,7 +403,6 @@ func TestDetailPane_CheckRunsInView(t *testing.T) {
 // TestDetailPane_WatchesInView verifies active watches appear in the rendered view.
 func TestDetailPane_WatchesInView(t *testing.T) {
 	p := makeDetailPane(nil, "md")
-	p.visible = true
 
 	msg := PRFocusedMsg{
 		PR: makePR("pr1", "PR"),
@@ -441,7 +426,6 @@ func TestDetailPane_WatchesInView(t *testing.T) {
 // TestDetailPane_TimelineInView verifies timeline events appear in the view.
 func TestDetailPane_TimelineInView(t *testing.T) {
 	p := makeDetailPane(nil, "md")
-	p.visible = true
 
 	msg := PRFocusedMsg{
 		PR: makePR("pr1", "PR"),
@@ -464,7 +448,6 @@ func TestDetailPane_TimelineInView(t *testing.T) {
 // when check runs, threads, watches, and timeline are all absent.
 func TestDetailPane_EmptyStateMessages(t *testing.T) {
 	p := makeDetailPane(nil, "md")
-	p.visible = true
 	p = sendMsg(p, makeFocusMsg(makePR("pr1", "PR"), nil))
 
 	view := p.View()
@@ -524,7 +507,6 @@ func TestDetailPane_Truncate(t *testing.T) {
 // appears next to the current thread in the view.
 func TestDetailPane_ThreadNavigationInView(t *testing.T) {
 	p := makeDetailPane(nil, "")
-	p.visible = true
 
 	threads := []persistence.ReviewThread{
 		makeThread("t1", "a.go", false),
@@ -562,9 +544,6 @@ func TestDetailPane_NewDetailPane(t *testing.T) {
 	if p == nil {
 		t.Fatal("NewDetailPane returned nil")
 	}
-	if p.visible {
-		t.Error("pane should be hidden by default")
-	}
 }
 
 // TestDetailPane_MarkResolved_NoThreadsIsNoop verifies r is a no-op when there are
@@ -572,7 +551,6 @@ func TestDetailPane_NewDetailPane(t *testing.T) {
 func TestDetailPane_MarkResolved_NoThreadsIsNoop(t *testing.T) {
 	resolver := &stubThreadResolver{}
 	p := makeDetailPane(resolver, "")
-	p.visible = true
 
 	// No threads loaded.
 	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
@@ -632,7 +610,6 @@ func TestDetailPane_NNkeyNotRoutedWhenClosed(t *testing.T) {
 // gracefully (falls back to raw title).
 func TestDetailPane_MarkdownNilRenderer(t *testing.T) {
 	p := newDetailPaneWithRenderer(nil, nil)
-	p.visible = true
 
 	pr := makePR("pr1", "Fallback Title")
 	p = sendMsg(p, makeFocusMsg(pr, nil))
@@ -647,7 +624,6 @@ func TestDetailPane_MarkdownNilRenderer(t *testing.T) {
 func TestDetailPane_MarkdownEmptyRendered(t *testing.T) {
 	md := &stubMarkdownRenderer{output: "   \n  "}
 	p := newDetailPaneWithRenderer(nil, md)
-	p.visible = true
 
 	pr := makePR("pr1", "Raw Title Fallback")
 	p = sendMsg(p, makeFocusMsg(pr, nil))
@@ -662,7 +638,6 @@ func TestDetailPane_MarkdownEmptyRendered(t *testing.T) {
 func TestDetailPane_GlamourRendererRender(t *testing.T) {
 	// Create a real glamour TermRenderer and wrap it.
 	p := NewDetailPane(nil)
-	p.visible = true
 
 	pr := makePR("pr1", "# Heading")
 	p = sendMsg(p, makeFocusMsg(pr, nil))
@@ -698,7 +673,6 @@ func TestDefaultMarkdownRenderer_Error(t *testing.T) {
 // other than n/N/r are forwarded to the viewport.
 func TestDetailPane_UpdateForwardsOtherKeysToViewport(t *testing.T) {
 	p := makeDetailPane(nil, "md")
-	p.visible = true
 
 	pr := makePR("pr1", "PR")
 	p = sendMsg(p, makeFocusMsg(pr, nil))

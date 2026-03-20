@@ -564,8 +564,8 @@ func (m Model) dispatchToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 // propagateResize sends each sub-model a ResizeMsg with its allocated width and
 // height. Width is always the full terminal width. Height is split evenly among
 // the visible panels (2 panels by default, 3 when watches has content).
-// The detail pane and command bar each receive the full terminal dimensions so
-// they can make their own layout decisions.
+// The detail pane receives modal-sized dimensions (75% of terminal minus border
+// overhead). The command bar receives the full terminal dimensions.
 func (m *Model) propagateResize() {
 	n := m.numVisiblePanels()
 	panelH := m.panelContentHeight(n)
@@ -574,7 +574,18 @@ func (m *Model) propagateResize() {
 	m.myPRs, _ = m.myPRs.Update(ResizeMsg{Width: panelW, Height: panelH})
 	m.reviewQueue, _ = m.reviewQueue.Update(ResizeMsg{Width: panelW, Height: panelH})
 	m.watches, _ = m.watches.Update(ResizeMsg{Width: panelW, Height: panelH})
-	m.detailPane, _ = m.detailPane.Update(ResizeMsg{Width: m.width, Height: m.height})
+
+	// Send modal-sized dimensions: 75% of terminal minus border overhead
+	// (2 cols for left/right border, 3 rows for top border + title + bottom border).
+	modalContentW := m.width*3/4 - 2
+	modalContentH := m.height*3/4 - 3
+	if modalContentW < 1 {
+		modalContentW = 1
+	}
+	if modalContentH < 1 {
+		modalContentH = 1
+	}
+	m.detailPane, _ = m.detailPane.Update(ResizeMsg{Width: modalContentW, Height: modalContentH})
 	m.commandBar, _ = m.commandBar.Update(ResizeMsg{Width: m.width, Height: m.height})
 }
 
@@ -618,8 +629,10 @@ func (m Model) panelContentHeight(n int) int {
 //   - My Pull Requests panel
 //   - Review Queue panel
 //   - Watches panel (omitted when it has no content)
-//   - Detail pane (omitted when detailOpen is false)
 //   - Command bar
+//
+// When detailOpen is true the detail pane is rendered as a centred floating
+// modal overlaid on the dimmed panel layout rather than as a stacked section.
 //
 // When helpVisible is true the normal layout is dimmed and the help overlay is
 // rendered on top.
@@ -641,16 +654,16 @@ func (m Model) View() string {
 		sections = append(sections, m.panelView("WATCHES", m.watches, m.focused == PanelWatches, panelH))
 	}
 
-	if m.detailOpen {
-		sections = append(sections, m.detailPaneView())
-	}
-
 	sections = append(sections, m.commandBarView())
 
 	normal := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
 	if sugg := m.commandBarSuggestionsView(); sugg != "" {
 		normal = overlayAbove(normal, sugg)
+	}
+
+	if m.detailOpen {
+		normal = overlayModal(normal, m.detailPaneView(), m.width, m.height)
 	}
 
 	if m.helpVisible {
@@ -708,15 +721,23 @@ func (m Model) panelView(title string, sub SubModel, focused bool, contentHeight
 	return border.Render(m.theme.PanelTitle.Render(title) + "\n" + body)
 }
 
-// detailPaneView renders the collapsible detail pane.
+// detailPaneView renders the detail pane as a floating modal box. The box uses
+// a rounded border in the focused accent colour and occupies 75% of the
+// terminal width and height.
 func (m Model) detailPaneView() string {
-	style := m.theme.PanelBorder
-	if m.width > 0 {
-		style = style.Width(m.width - 2)
+	borderColor := lipgloss.Color("#7C7CF8")
+	if !m.theme.Dark {
+		borderColor = lipgloss.Color("#3030AA")
 	}
-	return style.Render(
-		m.theme.PanelTitle.Render("DETAIL") + "\n" + m.detailPane.View(),
-	)
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor)
+	if m.width > 0 && m.height > 0 {
+		modalW := m.width * 3 / 4
+		modalH := m.height * 3 / 4
+		style = style.Width(modalW - 2).Height(modalH - 3)
+	}
+	return style.Render(m.theme.PanelTitle.Render("DETAIL") + "\n" + m.detailPane.View())
 }
 
 // commandBarView renders the command bar pinned to the bottom spanning the full
