@@ -1093,3 +1093,36 @@ tasks:
       fits, clamped, line count preserved).
       New model_test.go tests: stubCommandBarOverlay exercises overlay path in View()
       and commandBarSuggestionsView(). 100% statement coverage maintained.
+
+  - id: 47
+    title: Detail pane as floating modal overlay
+    status: done
+    depends_on: [46]
+    description: >
+      The detail pane was appended as a stacked section below the panels, causing
+      them to compress when it opened. Replace this with a centred floating modal
+      that overlays the panels without affecting their layout.
+      (1) New overlayModal(base, modal string, termWidth, termHeight int) string in
+      overlay_detail.go: dims background lines per-line using lipgloss.Faint, centres
+      the modal with lipgloss.Place, and replaces only the rows occupied by the modal.
+      Falls back to stacking when dimensions are zero (pre-WindowSizeMsg).
+      (2) Model.View() calls overlayModal() after building the normal layout when
+      detailOpen is true, instead of appending to the sections slice.
+      (3) detailPaneView() uses a rounded accent border sized at 75% of terminal
+      dimensions (width*3/4, height*3/4).
+      (4) propagateResize() sends modal-sized dimensions (75% minus border overhead)
+      to the detail pane rather than full terminal dimensions.
+      (5) Remove DetailPane.visible and Toggle() — visibility is controlled entirely
+      by Model.detailOpen. Add ResizeMsg handling to resize the viewport.
+    references:
+      - "internal/ui/overlay_detail.go"
+      - "internal/ui/model.go"
+      - "internal/ui/panel_detail.go"
+    testing: >
+      New overlay_detail_test.go: table-driven tests for overlayModal covering
+      zero-dimension fallback, modal content present, line count preserved,
+      background lines retain base content, tall modal clamped to base.
+      Updated panel_detail_test.go: removed Toggle/visible tests; removed
+      p.visible = true setup lines; added TestDetailPane_ResizeMsg.
+      Updated model_test.go: existing DETAIL visibility tests continue to pass
+      via the zero-dimension fallback path. 100% statement coverage maintained.
