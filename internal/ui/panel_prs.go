@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/evanisnor/argh/internal/eventbus"
@@ -98,18 +99,22 @@ func (p *MyPRsPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 // RowCount returns the number of PR rows in the panel.
 func (p *MyPRsPanel) RowCount() int { return len(p.rows) }
 
-// prColumns defines the column layout for the My PRs table.
-var prColumns = []columnDef{
-	{width: 1, align: lipgloss.Right, trailSep: " "}, // SID
-	{width: 2, align: lipgloss.Right},                 // Watch
-	{width: 14, align: lipgloss.Left, trailSep: " │ "}, // Repo
-	{width: 5, align: lipgloss.Left, trailSep: " │ "},  // #
-	{width: 0, align: lipgloss.Left, trailSep: " │ "},  // Title (flex)
-	{width: 8, align: lipgloss.Left, trailSep: " │ "},  // Status
-	{width: 2, align: lipgloss.Left, trailSep: " │ "},  // CI
-	{width: 5, align: lipgloss.Left, trailSep: " │ "},  // Reviews
-	{width: 2, align: lipgloss.Left, trailSep: " │ "},  // Comments
-	{width: 3, align: lipgloss.Left},                    // Age
+// prHeaders are the column header labels for the My PRs table.
+var prHeaders = []string{"", "", "REPO", "#", "TITLE", "●", "⚙", "✓✗", "💬", "⏱"}
+
+// prColWidths defines fixed column widths; index 4 (title) is 0 = flex.
+var prColWidths = []int{1, 2, 14, 5, 0, 17, 2, 5, 2, 3}
+
+// prBaseStyle returns the base layout style (width + alignment) for a column.
+func prBaseStyle(col int) lipgloss.Style {
+	s := lipgloss.NewStyle()
+	if col < len(prColWidths) && prColWidths[col] > 0 {
+		s = s.Width(prColWidths[col])
+	}
+	if col <= 1 {
+		s = s.AlignHorizontal(lipgloss.Right)
+	}
+	return s
 }
 
 // View renders the panel content (title/border is added by the root model).
@@ -117,24 +122,84 @@ func (p *MyPRsPanel) View() string {
 	if len(p.rows) == 0 {
 		return "  (no open pull requests)"
 	}
-	var sb strings.Builder
-	sb.WriteString(p.renderHeader())
-	sb.WriteString("\n")
+
 	now := p.clock.Now()
+	rows := make([][]string, len(p.rows))
 	for i, row := range p.rows {
-		sb.WriteString(p.renderRow(row, now, i == p.cursor))
-		if i < len(p.rows)-1 {
-			sb.WriteString("\n")
-		}
+		rows[i] = p.buildPRCells(row, now)
 	}
-	return sb.String()
+
+	sf := func(row, col int) lipgloss.Style {
+		base := prBaseStyle(col)
+		if row < 0 {
+			return base.Faint(true)
+		}
+		r := p.rows[row]
+		if r.pr.Draft {
+			base = base.Faint(true)
+		}
+		if r.pr.Status == "approved" || r.pr.CIState == "passing" || r.pr.CIState == "success" {
+			base = base.Foreground(lipgloss.Color("#4CAF50"))
+		}
+		if r.pr.CIState == "running" || r.pr.CIState == "in_progress" || r.pr.CIState == "pending" {
+			base = base.Foreground(lipgloss.Color("#FFC107"))
+		}
+		if r.changesCount > 0 {
+			base = base.Foreground(lipgloss.Color("#FFA07A"))
+		}
+		if r.pr.CIState == "failing" || r.pr.CIState == "failure" {
+			base = base.Foreground(lipgloss.Color("#FF6B6B"))
+		}
+		if p.flashing[r.pr.ID] {
+			base = base.Bold(true)
+		}
+		if row == p.cursor {
+			base = base.Reverse(true)
+		}
+		return base
+	}
+
+	t := table.New().
+		Headers(prHeaders...).
+		Rows(rows...).
+		Border(lipgloss.NormalBorder()).
+		BorderColumn(true).BorderHeader(true).
+		BorderTop(false).BorderBottom(false).
+		BorderLeft(false).BorderRight(false).
+		Wrap(false).
+		StyleFunc(sf)
+	if p.width > 0 {
+		t = t.Width(p.width)
+	}
+	return strings.TrimRight(t.Render(), "\n")
 }
 
-// renderHeader builds the column header line for the My PRs table.
-func (p *MyPRsPanel) renderHeader() string {
-	b := &rowBuilder{columns: prColumns, totalWidth: p.width}
-	cells := []string{"", "", "REPO", "#", "TITLE", "●", "⚙", "✓✗", "💬", "⏱"}
-	return b.buildRow(cells, lipgloss.NewStyle().Faint(true))
+// buildPRCells builds the cell values for a single PR row.
+func (p *MyPRsPanel) buildPRCells(row prRow, now time.Time) []string {
+	sid := row.sessionID
+	if sid == "" {
+		sid = "-"
+	}
+	watchIcon := " "
+	if row.hasWatches {
+		watchIcon = "👁"
+	}
+	title := row.pr.Title
+	if row.pr.Draft {
+		title = "[draft] " + title
+	}
+	return []string{
+		sid,
+		watchIcon,
+		row.pr.Repo,
+		fmt.Sprintf("#%d", row.pr.Number),
+		title,
+		prStatusDisplay(row.pr.Status, row.pr.Draft),
+		prCIDisplay(row.pr.CIState),
+		prReviewDisplay(row.approvedCount, row.changesCount),
+		fmt.Sprintf("%d", row.commentCount),
+		formatAge(now.Sub(row.pr.LastActivityAt)),
+	}
 }
 
 // SelectedPR returns the PullRequest currently under the cursor, or nil when
@@ -206,61 +271,6 @@ func (p *MyPRsPanel) refresh() error {
 	return nil
 }
 
-// renderRow formats a single PR row as a table row with fixed-width columns.
-func (p *MyPRsPanel) renderRow(row prRow, now time.Time, focused bool) string {
-	sid := row.sessionID
-	if sid == "" {
-		sid = "-"
-	}
-
-	watchIcon := " "
-	if row.hasWatches {
-		watchIcon = "👁"
-	}
-
-	title := row.pr.Title
-	if row.pr.Draft {
-		title = "[draft] " + title
-	}
-
-	b := &rowBuilder{columns: prColumns, totalWidth: p.width}
-	cells := []string{
-		sid,
-		watchIcon,
-		row.pr.Repo,
-		fmt.Sprintf("#%d", row.pr.Number),
-		title,
-		prStatusDisplay(row.pr.Status, row.pr.Draft),
-		prCIDisplay(row.pr.CIState),
-		prReviewDisplay(row.approvedCount, row.changesCount),
-		fmt.Sprintf("%d", row.commentCount),
-		formatAge(now.Sub(row.pr.LastActivityAt)),
-	}
-
-	style := lipgloss.NewStyle()
-	if row.pr.Draft {
-		style = style.Faint(true)
-	}
-	if row.pr.Status == "approved" || row.pr.CIState == "passing" || row.pr.CIState == "success" {
-		style = style.Foreground(lipgloss.Color("#4CAF50"))
-	}
-	if row.pr.CIState == "running" || row.pr.CIState == "in_progress" || row.pr.CIState == "pending" {
-		style = style.Foreground(lipgloss.Color("#FFC107"))
-	}
-	if row.changesCount > 0 {
-		style = style.Foreground(lipgloss.Color("#FFA07A"))
-	}
-	if row.pr.CIState == "failing" || row.pr.CIState == "failure" {
-		style = style.Foreground(lipgloss.Color("#FF6B6B"))
-	}
-	if p.flashing[row.pr.ID] {
-		style = style.Bold(true)
-	}
-	if focused {
-		style = style.Reverse(true)
-	}
-	return b.buildRow(cells, style)
-}
 
 // truncateTitle truncates s with a trailing "…" if width > 0 and
 // fixedLen + displayWidth(s) would exceed width. Uses display-width

@@ -8,22 +8,28 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 
 	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
 )
 
-// rqColumns defines the column layout for the Review Queue table.
-var rqColumns = []columnDef{
-	{width: 1, align: lipgloss.Right, trailSep: " "}, // SID
-	{width: 2, align: lipgloss.Right},                 // Watch
-	{width: 14, align: lipgloss.Left, trailSep: " │ "}, // Repo
-	{width: 5, align: lipgloss.Left, trailSep: " │ "},  // #
-	{width: 0, align: lipgloss.Left, trailSep: " │ "},  // Title (flex)
-	{width: 12, align: lipgloss.Left, trailSep: " │ "}, // Author
-	{width: 2, align: lipgloss.Left, trailSep: " │ "},  // CI
-	{width: 3, align: lipgloss.Left, trailSep: " │ "},  // Age
-	{width: 3, align: lipgloss.Left},                    // Urgency
+// rqHeaders are the column header labels for the Review Queue table.
+var rqHeaders = []string{"", "", "REPO", "#", "TITLE", "@", "⚙", "⏱", "!!"}
+
+// rqColWidths defines fixed column widths; index 4 (title) is 0 = flex.
+var rqColWidths = []int{1, 2, 14, 5, 0, 12, 2, 3, 3}
+
+// rqBaseStyle returns the base layout style (width + alignment) for a column.
+func rqBaseStyle(col int) lipgloss.Style {
+	s := lipgloss.NewStyle()
+	if col < len(rqColWidths) && rqColWidths[col] > 0 {
+		s = s.Width(rqColWidths[col])
+	}
+	if col <= 1 {
+		s = s.AlignHorizontal(lipgloss.Right)
+	}
+	return s
 }
 
 // ReviewReader is the data access interface required by the Review Queue panel.
@@ -107,24 +113,70 @@ func (p *ReviewQueuePanel) View() string {
 	if len(p.rows) == 0 {
 		return "  (no reviews requested)"
 	}
-	var sb strings.Builder
-	sb.WriteString(p.renderHeader())
-	sb.WriteString("\n")
+
 	now := p.clock.Now()
+	rows := make([][]string, len(p.rows))
 	for i, row := range p.rows {
-		sb.WriteString(p.renderRow(row, now, i == p.cursor))
-		if i < len(p.rows)-1 {
-			sb.WriteString("\n")
-		}
+		rows[i] = p.buildRQCells(row, now)
 	}
-	return sb.String()
+
+	sf := func(row, col int) lipgloss.Style {
+		base := rqBaseStyle(col)
+		if row < 0 {
+			return base.Faint(true)
+		}
+		r := p.rows[row]
+		if r.isLastReviewer {
+			base = base.Foreground(lipgloss.Color("#FFD700"))
+		}
+		if r.readyToReview {
+			base = base.Foreground(lipgloss.Color("#90EE90"))
+		}
+		if p.flashing[r.pr.ID] {
+			base = base.Bold(true)
+		}
+		if row == p.cursor {
+			base = base.Reverse(true)
+		}
+		return base
+	}
+
+	t := table.New().
+		Headers(rqHeaders...).
+		Rows(rows...).
+		Border(lipgloss.NormalBorder()).
+		BorderColumn(true).BorderHeader(true).
+		BorderTop(false).BorderBottom(false).
+		BorderLeft(false).BorderRight(false).
+		Wrap(false).
+		StyleFunc(sf)
+	if p.width > 0 {
+		t = t.Width(p.width)
+	}
+	return strings.TrimRight(t.Render(), "\n")
 }
 
-// renderHeader builds the column header line for the Review Queue table.
-func (p *ReviewQueuePanel) renderHeader() string {
-	b := &rowBuilder{columns: rqColumns, totalWidth: p.width}
-	cells := []string{"", "", "REPO", "#", "TITLE", "@", "⚙", "⏱", "!!"}
-	return b.buildRow(cells, lipgloss.NewStyle().Faint(true))
+// buildRQCells builds the cell values for a single review queue row.
+func (p *ReviewQueuePanel) buildRQCells(row reviewRow, now time.Time) []string {
+	sid := row.sessionID
+	if sid == "" {
+		sid = "-"
+	}
+	watchIcon := " "
+	if row.hasWatches {
+		watchIcon = "👁"
+	}
+	return []string{
+		sid,
+		watchIcon,
+		row.pr.Repo,
+		fmt.Sprintf("#%d", row.pr.Number),
+		row.pr.Title,
+		"@" + row.pr.Author,
+		prCIDisplay(row.pr.CIState),
+		formatAge(now.Sub(row.pr.LastActivityAt)),
+		urgencyDisplay(row.urgency),
+	}
 }
 
 // SelectedPR returns the PullRequest currently under the cursor, or nil when
@@ -271,43 +323,3 @@ func urgencyDisplay(score int) string {
 	}
 }
 
-// renderRow formats a single review queue row as a table row with fixed-width columns.
-func (p *ReviewQueuePanel) renderRow(row reviewRow, now time.Time, focused bool) string {
-	sid := row.sessionID
-	if sid == "" {
-		sid = "-"
-	}
-
-	watchIcon := " "
-	if row.hasWatches {
-		watchIcon = "👁"
-	}
-
-	b := &rowBuilder{columns: rqColumns, totalWidth: p.width}
-	cells := []string{
-		sid,
-		watchIcon,
-		row.pr.Repo,
-		fmt.Sprintf("#%d", row.pr.Number),
-		row.pr.Title,
-		"@" + row.pr.Author,
-		prCIDisplay(row.pr.CIState),
-		formatAge(now.Sub(row.pr.LastActivityAt)),
-		urgencyDisplay(row.urgency),
-	}
-
-	style := lipgloss.NewStyle()
-	if row.isLastReviewer {
-		style = style.Foreground(lipgloss.Color("#FFD700"))
-	}
-	if row.readyToReview {
-		style = style.Foreground(lipgloss.Color("#90EE90"))
-	}
-	if p.flashing[row.pr.ID] {
-		style = style.Bold(true)
-	}
-	if focused {
-		style = style.Reverse(true)
-	}
-	return b.buildRow(cells, style)
-}

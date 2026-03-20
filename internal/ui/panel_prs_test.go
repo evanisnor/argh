@@ -285,7 +285,6 @@ func TestMyPRsPanel_HeaderRow(t *testing.T) {
 }
 
 // TestMyPRsPanel_StatusValues verifies all five status values render correctly.
-// Longer status strings are truncated to fit the 8-column status field.
 func TestMyPRsPanel_StatusValues(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -296,8 +295,8 @@ func TestMyPRsPanel_StatusValues(t *testing.T) {
 		{"draft", "open", true, "draft"},
 		{"open", "open", false, "open"},
 		{"approved", "approved", false, "approved"},
-		{"changes_requested", "changes_requested", false, "changes"},
-		{"merge_queued", "merge_queued", false, "merge q"},
+		{"changes_requested", "changes_requested", false, "changes requested"},
+		{"merge_queued", "merge_queued", false, "merge queued"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

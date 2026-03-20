@@ -1784,3 +1784,45 @@ tasks:
       Remove titleWidth() method. Define column specs matching current layout.
     testing: >
       All existing panel_reviews_test.go tests pass unchanged.
+
+  # ─── Phase 24: Replace rowBuilder with lipgloss/table ────────────────────────
+
+  - id: 107
+    title: "Rewrite My PRs panel to use lipgloss/table"
+    status: done
+    depends_on: [105]
+    description: >
+      Remove prColumns var, renderHeader(), renderRow() methods. Add import for
+      lipgloss/table. Add prBaseStyle(col int) helper returning Width+Align per
+      column (status col widened from 8→15). Rewrite View() to build [][]string
+      rows, create StyleFunc closure for per-row styling (draft=faint, approved/
+      passing=green, running=yellow, changes=orange, failing=red, flashing=bold,
+      focused=reverse, header=faint), construct table.New() with borders (column
+      + header, no outer), Wrap(false), and optional Width(p.width).
+    testing: >
+      All existing panel_prs_test.go tests pass. TestMyPRsPanel_StatusValues
+      updated to expect full "changes requested" and "merge queued" strings
+      (15-char column fits them). 100% coverage maintained.
+
+  - id: 108
+    title: "Rewrite Review Queue panel to use lipgloss/table"
+    status: done
+    depends_on: [106]
+    description: >
+      Same pattern as task 107 for panel_reviews.go. Remove rqColumns var,
+      renderHeader(), renderRow() methods. Add rqBaseStyle(col int) helper.
+      Rewrite View() with lipgloss/table. Row styling: isLastReviewer→gold,
+      readyToReview→light green, flashing→bold, focused→reverse, header→faint.
+    testing: >
+      All existing panel_reviews_test.go tests pass. 100% coverage maintained.
+
+  - id: 109
+    title: "Delete tablerow.go and tablerow_test.go"
+    status: done
+    depends_on: [107, 108]
+    description: >
+      Delete internal/ui/tablerow.go and internal/ui/tablerow_test.go. These
+      files contain the rowBuilder and columnDef types which are no longer
+      referenced after tasks 107 and 108.
+    testing: >
+      go build ./... and go test ./... pass cleanly. 100% coverage maintained.
