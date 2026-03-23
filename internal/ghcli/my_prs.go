@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/evanisnor/argh/internal/api"
+	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
 )
 
@@ -62,6 +63,43 @@ type ghReviewRequest struct {
 	Name  string `json:"name"`
 }
 
+// ghMergeQueueResponse models the GraphQL response for merge queue status.
+type ghMergeQueueResponse struct {
+	Data struct {
+		Node struct {
+			MergeQueueEntry *struct {
+				ID string `json:"id"`
+			} `json:"mergeQueueEntry"`
+		} `json:"node"`
+	} `json:"data"`
+}
+
+// fetchMergeQueueStatus queries whether a PR is in the merge queue via
+// `gh api graphql`. Returns true if mergeQueueEntry is present, false otherwise.
+// Errors are logged and treated as "not in merge queue" to avoid blocking the fetch.
+func fetchMergeQueueStatus(ctx context.Context, runner CommandRunner, nodeID string) bool {
+	query := `query($nodeID: ID!) { node(id: $nodeID) { ... on PullRequest { mergeQueueEntry { id } } } }`
+	args := []string{
+		"api", "graphql",
+		"-f", "query=" + query,
+		"-F", "nodeID=" + nodeID,
+	}
+
+	out, err := runner.Run(ctx, args)
+	if err != nil {
+		slog.Debug("ghcli: merge queue query failed", "nodeID", nodeID, "error", err)
+		return false
+	}
+
+	var resp ghMergeQueueResponse
+	if err := json.Unmarshal(out, &resp); err != nil {
+		slog.Debug("ghcli: merge queue response parse failed", "nodeID", nodeID, "error", err)
+		return false
+	}
+
+	return resp.Data.Node.MergeQueueEntry != nil
+}
+
 // fetchPRDetail fetches detail fields for a single PR via `gh pr view`.
 func fetchPRDetail(ctx context.Context, runner CommandRunner, repo string, number int, fields string) (ghPRDetail, error) {
 	args := []string{
@@ -100,9 +138,17 @@ func NewGHCLIMyPRsFetcher(runner CommandRunner, store api.PRStore, bus api.Publi
 	}
 }
 
+// prKey identifies a PR by repo and number for stale-PR tracking.
+type prKey struct {
+	Repo   string
+	Number int
+}
+
 // Fetch queries for open PRs authored by the user and persists them.
 // Phase 1: gh search prs for the PR list (supported fields only).
 // Phase 2: gh pr view per PR for statusCheckRollup, reviews, reviewRequests.
+// After a successful fetch, PRs in the DB that were not returned by the API
+// are deleted and PRRemoved events are emitted.
 func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 	args := []string{
 		"search", "prs",
@@ -124,6 +170,7 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 
 	slog.Debug("ghcli: fetched my prs", "count", len(prs))
 
+	seen := make(map[prKey]bool)
 	for _, p := range prs {
 		repo := p.Repository.NameWithOwner
 		if repo == "" {
@@ -137,13 +184,14 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 
 		runs := convertStatusChecks(detail.StatusCheckRollup)
 		reviews := convertReviews(detail.Reviews)
+		inMergeQueue := fetchMergeQueueStatus(ctx, f.runner, p.ID)
 
 		prRow := persistence.PullRequest{
 			ID:             p.ID,
 			Repo:           repo,
 			Number:         p.Number,
 			Title:          p.Title,
-			Status:         api.DerivePRStatus(false, p.IsDraft, reviews),
+			Status:         api.DerivePRStatus(inMergeQueue, p.IsDraft, reviews),
 			CIState:        api.DeriveCIState(runs),
 			Draft:          p.IsDraft,
 			Author:         p.Author.Login,
@@ -157,9 +205,32 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 		if err := api.PersistPR(f.store, f.bus, prRow, runs, reviews); err != nil {
 			return err
 		}
+		seen[prKey{Repo: repo, Number: p.Number}] = true
 	}
 
+	f.cleanupStalePRs(seen)
 	return nil
+}
+
+// cleanupStalePRs deletes PRs from the DB that were not seen in the latest fetch.
+func (f *GHCLIMyPRsFetcher) cleanupStalePRs(seen map[prKey]bool) {
+	owned, err := f.store.ListPullRequestsByAuthor(f.login)
+	if err != nil {
+		return
+	}
+	for _, pr := range owned {
+		if !seen[prKey{Repo: pr.Repo, Number: pr.Number}] {
+			deleted, err := f.store.DeletePullRequest(pr.Repo, pr.Number)
+			if err != nil {
+				continue
+			}
+			f.bus.Publish(eventbus.Event{
+				Type:   eventbus.PRRemoved,
+				Before: deleted,
+				After:  nil,
+			})
+		}
+	}
 }
 
 // convertStatusChecks converts gh CLI status checks to the shared CheckRunData type.

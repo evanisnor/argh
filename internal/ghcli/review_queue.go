@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/evanisnor/argh/internal/api"
+	"github.com/evanisnor/argh/internal/eventbus"
 	"github.com/evanisnor/argh/internal/persistence"
 	"github.com/shurcooL/githubv4"
 )
@@ -64,6 +65,7 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 
 	slog.Debug("ghcli: fetched review queue prs", "count", len(prs))
 
+	seen := make(map[prKey]bool)
 	for _, p := range prs {
 		repo := p.Repository.NameWithOwner
 		if repo == "" {
@@ -78,13 +80,14 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 		runs := convertStatusChecks(detail.StatusCheckRollup)
 		reviews := convertReviews(detail.Reviews)
 		commits := convertCommits(detail.Commits)
+		inMergeQueue := fetchMergeQueueStatus(ctx, f.runner, p.ID)
 
 		prRow := persistence.PullRequest{
 			ID:             p.ID,
 			Repo:           repo,
 			Number:         p.Number,
 			Title:          p.Title,
-			Status:         api.DerivePRStatus(false, p.IsDraft, reviews),
+			Status:         api.DerivePRStatus(inMergeQueue, p.IsDraft, reviews),
 			CIState:        api.DeriveCIState(runs),
 			Draft:          p.IsDraft,
 			Author:         p.Author.Login,
@@ -98,9 +101,32 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 		if err := api.PersistRQPR(f.store, f.bus, prRow, runs, reviews, commits); err != nil {
 			return err
 		}
+		seen[prKey{Repo: repo, Number: p.Number}] = true
 	}
 
+	f.cleanupStalePRs(seen)
 	return nil
+}
+
+// cleanupStalePRs deletes review-queue PRs from the DB that were not seen in the latest fetch.
+func (f *GHCLIReviewQueueFetcher) cleanupStalePRs(seen map[prKey]bool) {
+	others, err := f.store.ListPullRequestsNotByAuthor(f.login)
+	if err != nil {
+		return
+	}
+	for _, pr := range others {
+		if !seen[prKey{Repo: pr.Repo, Number: pr.Number}] {
+			deleted, err := f.store.DeletePullRequest(pr.Repo, pr.Number)
+			if err != nil {
+				continue
+			}
+			f.bus.Publish(eventbus.Event{
+				Type:   eventbus.PRRemoved,
+				Before: deleted,
+				After:  nil,
+			})
+		}
+	}
 }
 
 // convertCommits converts gh CLI commit data to the shared CommitData type.

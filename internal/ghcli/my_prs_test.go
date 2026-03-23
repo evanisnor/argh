@@ -20,6 +20,9 @@ func TestGHCLIMyPRsFetcher_Fetch_Success(t *testing.T) {
 		if args[0] == "pr" && args[1] == "view" {
 			return []byte(myPRsDetailJSON), nil
 		}
+		if args[0] == "api" && args[1] == "graphql" {
+			return []byte(`{"data":{"node":{"mergeQueueEntry":null}}}`), nil
+		}
 		return nil, fmt.Errorf("unexpected command: %v", args)
 	}
 	store := api.NewStubPRStore()
@@ -63,9 +66,9 @@ func TestGHCLIMyPRsFetcher_Fetch_Success(t *testing.T) {
 		t.Errorf("event type = %v, want %v", pub.Events[0].Type, eventbus.PRUpdated)
 	}
 
-	// Verify two-phase: search call + pr view call
-	if runner.CallCount() != 2 {
-		t.Errorf("expected 2 runner calls (search + view), got %d", runner.CallCount())
+	// Verify three-phase: search call + pr view call + merge queue graphql call
+	if runner.CallCount() != 3 {
+		t.Errorf("expected 3 runner calls (search + view + graphql), got %d", runner.CallCount())
 	}
 }
 
@@ -391,6 +394,99 @@ func TestConvertReviews_Empty(t *testing.T) {
 	result := convertReviews(nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 reviews for nil input, got %d", len(result))
+	}
+}
+
+// ── Merge queue detection ───────────────────────────────────────────────────
+
+func TestFetchMergeQueueStatus_InQueue(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(`{"data":{"node":{"mergeQueueEntry":{"id":"MQE_123"}}}}`), nil
+	}
+	if !fetchMergeQueueStatus(context.Background(), runner, "PR_abc") {
+		t.Error("expected true for non-null mergeQueueEntry")
+	}
+}
+
+func TestFetchMergeQueueStatus_NotInQueue(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(`{"data":{"node":{"mergeQueueEntry":null}}}`), nil
+	}
+	if fetchMergeQueueStatus(context.Background(), runner, "PR_abc") {
+		t.Error("expected false for null mergeQueueEntry")
+	}
+}
+
+func TestFetchMergeQueueStatus_CommandError(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return nil, errors.New("api error")
+	}
+	if fetchMergeQueueStatus(context.Background(), runner, "PR_abc") {
+		t.Error("expected false on command error")
+	}
+}
+
+func TestFetchMergeQueueStatus_MalformedJSON(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte("{bad"), nil
+	}
+	if fetchMergeQueueStatus(context.Background(), runner, "PR_abc") {
+		t.Error("expected false on malformed JSON")
+	}
+}
+
+func TestFetchMergeQueueStatus_CorrectArgs(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(`{"data":{"node":{"mergeQueueEntry":null}}}`), nil
+	}
+	fetchMergeQueueStatus(context.Background(), runner, "PR_abc")
+
+	call := runner.FindCall("api", "graphql")
+	if call == nil {
+		t.Fatal("expected api graphql call")
+	}
+	if runner.FindCall("nodeID=PR_abc") == nil {
+		t.Error("expected nodeID=PR_abc in args")
+	}
+}
+
+func TestGHCLIMyPRsFetcher_Fetch_MergeQueued(t *testing.T) {
+	callCount := 0
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(myPRsSearchJSON), nil
+		}
+		if args[0] == "pr" && args[1] == "view" {
+			return []byte(myPRsDetailJSON), nil
+		}
+		if args[0] == "api" && args[1] == "graphql" {
+			callCount++
+			return []byte(`{"data":{"node":{"mergeQueueEntry":{"id":"MQE_1"}}}}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %v", args)
+	}
+	store := api.NewStubPRStore()
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIMyPRsFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch error = %v", err)
+	}
+
+	if len(store.UpsertedPRs) != 1 {
+		t.Fatalf("expected 1 PR, got %d", len(store.UpsertedPRs))
+	}
+	if store.UpsertedPRs[0].Status != "merge queued" {
+		t.Errorf("Status = %q, want %q", store.UpsertedPRs[0].Status, "merge queued")
+	}
+	if callCount != 1 {
+		t.Errorf("expected 1 graphql call, got %d", callCount)
 	}
 }
 

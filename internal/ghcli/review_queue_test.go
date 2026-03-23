@@ -21,6 +21,9 @@ func TestGHCLIReviewQueueFetcher_Fetch_Success(t *testing.T) {
 		if args[0] == "pr" && args[1] == "view" {
 			return []byte(rqDetailJSON), nil
 		}
+		if args[0] == "api" && args[1] == "graphql" {
+			return []byte(`{"data":{"node":{"mergeQueueEntry":null}}}`), nil
+		}
 		return nil, fmt.Errorf("unexpected command: %v", args)
 	}
 	store := api.NewStubReviewQueueStore()
@@ -63,9 +66,9 @@ func TestGHCLIReviewQueueFetcher_Fetch_Success(t *testing.T) {
 		t.Errorf("event type = %v, want %v", pub.Events[0].Type, eventbus.PRUpdated)
 	}
 
-	// Verify two-phase: search call + pr view call
-	if runner.CallCount() != 2 {
-		t.Errorf("expected 2 runner calls (search + view), got %d", runner.CallCount())
+	// Verify three-phase: search call + pr view call + merge queue graphql call
+	if runner.CallCount() != 3 {
+		t.Errorf("expected 3 runner calls (search + view + graphql), got %d", runner.CallCount())
 	}
 }
 
@@ -232,6 +235,38 @@ func TestConvertCommits_Empty(t *testing.T) {
 	result := convertCommits(nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 commits for nil input, got %d", len(result))
+	}
+}
+
+// ── Merge queue detection ───────────────────────────────────────────────────
+
+func TestGHCLIReviewQueueFetcher_Fetch_MergeQueued(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(rqSearchJSON), nil
+		}
+		if args[0] == "pr" && args[1] == "view" {
+			return []byte(rqDetailJSON), nil
+		}
+		if args[0] == "api" && args[1] == "graphql" {
+			return []byte(`{"data":{"node":{"mergeQueueEntry":{"id":"MQE_1"}}}}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %v", args)
+	}
+	store := api.NewStubReviewQueueStore()
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIReviewQueueFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch error = %v", err)
+	}
+
+	if len(store.UpsertedPRs) != 1 {
+		t.Fatalf("expected 1 PR, got %d", len(store.UpsertedPRs))
+	}
+	if store.UpsertedPRs[0].Status != "merge queued" {
+		t.Errorf("Status = %q, want %q", store.UpsertedPRs[0].Status, "merge queued")
 	}
 }
 

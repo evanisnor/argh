@@ -1886,7 +1886,7 @@ tasks:
 
   - id: 115
     title: "Add merge queue detection to ghcli fetchers"
-    status: pending
+    status: done
     depends_on: [87, 88]
     description: >
       Since mergeQueueEntry is not a supported gh pr view --json field, add a
