@@ -11,7 +11,7 @@ clean:
 	rm -f $(BIN) coverage*.out
 
 test:
-	go test -race -coverprofile=coverage.out ./...
+	go test -race -timeout 120s -coverprofile=coverage.out ./...
 
 run: build
 	./$(BIN)

@@ -882,10 +882,13 @@ func TestProductionDeps_Authenticate(t *testing.T) {
 }
 
 func TestProductionDeps_RunSetup(t *testing.T) {
+	orig := setupRunProgram
+	setupRunProgram = func(m tea.Model) (tea.Model, error) { return m, nil }
+	defer func() { setupRunProgram = orig }()
+
 	deps := productionDeps()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	// The setup program will fail immediately with a cancelled context.
 	_, _ = deps.runSetup(ctx)
 }
 
@@ -977,11 +980,12 @@ func TestTUILauncher_DefaultBody(t *testing.T) {
 	teaRun = func(_ tea.Model) error { return nil }
 	defer func() { teaRun = origTeaRun }()
 
-	// Do NOT stub tuiLauncher — we want to exercise its body.
+	origSetup := setupRunProgram
+	setupRunProgram = func(m tea.Model) (tea.Model, error) { return m, nil }
+	defer func() { setupRunProgram = origSetup }()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	// productionDeps().authenticate calls `gh auth token`; with a cancelled
-	// context the call returns quickly (success or error — either covers the line).
 	_ = tuiLauncher(ctx, "test")
 }
 
