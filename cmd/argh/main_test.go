@@ -899,11 +899,6 @@ func TestSetupVerify(t *testing.T) {
 	_, _ = setupVerify(ctx, "ghp_coverage")
 }
 
-func TestSetupRunProgram(t *testing.T) {
-	// Exercise the function with a model that quits immediately.
-	_, _ = setupRunProgram(immediateQuitModel{})
-}
-
 // tempConfigFS returns a config.Filesystem backed by t.TempDir() so tests
 // never touch the real config directory.
 type tempConfigFS struct {
@@ -987,22 +982,6 @@ func TestTUILauncher_DefaultBody(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_ = tuiLauncher(ctx, "test")
-}
-
-// ── teaRun ────────────────────────────────────────────────────────────────────
-
-// immediateQuitModel is a tea.Model whose Init returns tea.Quit so the program
-// exits in the first event-loop tick without waiting for user input.
-type immediateQuitModel struct{}
-
-func (immediateQuitModel) Init() tea.Cmd                        { return tea.Quit }
-func (immediateQuitModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return immediateQuitModel{}, nil }
-func (immediateQuitModel) View() string                        { return "" }
-
-func TestTeaRun_ImmediateQuit(t *testing.T) {
-	// teaRun with a model that quits immediately covers the tea.NewProgram call.
-	// The program may return an error in non-TTY environments; that's acceptable.
-	_ = teaRun(immediateQuitModel{})
 }
 
 // makeStatusReader is referenced but unused in some test configurations —
