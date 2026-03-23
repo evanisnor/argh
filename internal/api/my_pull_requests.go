@@ -20,6 +20,7 @@ type PRStore interface {
 	UpsertPullRequest(pr persistence.PullRequest) error
 	UpsertReviewer(r persistence.Reviewer) error
 	UpsertCheckRun(cr persistence.CheckRun) error
+	UpsertReviewThread(rt persistence.ReviewThread) error
 	ListPullRequestsByAuthor(author string) ([]persistence.PullRequest, error)
 	DeletePullRequest(repo string, number int) (persistence.PullRequest, error)
 }
@@ -110,6 +111,26 @@ type prSearchMergeQueueEntry struct {
 	ID githubv4.String
 }
 
+type prSearchReviewThreadComment struct {
+	Body githubv4.String
+}
+
+type prSearchReviewThreadCommentConnection struct {
+	Nodes []prSearchReviewThreadComment
+}
+
+type prSearchReviewThread struct {
+	ID         githubv4.String
+	IsResolved githubv4.Boolean
+	Path       githubv4.String
+	Line       githubv4.Int
+	Comments   prSearchReviewThreadCommentConnection `graphql:"comments(first: 1)"`
+}
+
+type prSearchReviewThreadConnection struct {
+	Nodes []prSearchReviewThread
+}
+
 type prSearchPR struct {
 	ID              githubv4.String
 	Number          githubv4.Int
@@ -125,6 +146,7 @@ type prSearchPR struct {
 	ReviewRequests  prSearchReviewRequestConnection `graphql:"reviewRequests(first: 10)"`
 	Reviews         prSearchReviewConnection        `graphql:"reviews(first: 20)"`
 	CheckSuites     prSearchCheckSuiteConnection    `graphql:"checkSuites(first: 10)"`
+	ReviewThreads   prSearchReviewThreadConnection `graphql:"reviewThreads(first: 50)"`
 	MergeQueueEntry *prSearchMergeQueueEntry
 }
 
@@ -158,6 +180,15 @@ type CheckRunData struct {
 type ReviewData struct {
 	Login string
 	State string
+}
+
+// ReviewThreadData is an intermediate representation of a GitHub review thread.
+type ReviewThreadData struct {
+	ID       string
+	Resolved bool
+	Body     string
+	Path     string
+	Line     int
 }
 
 // prKey identifies a PR by repo and number for stale-PR tracking.
@@ -196,6 +227,7 @@ func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 
 			runs := extractCheckRuns(p.CheckSuites)
 			reviews := extractReviews(p.Reviews)
+			threads := extractReviewThreads(p.ReviewThreads)
 
 			prID := string(p.ID)
 			prRow := persistence.PullRequest{
@@ -215,7 +247,7 @@ func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 				GlobalID:       prID,
 			}
 
-			if err := f.persistPR(prRow, runs, reviews); err != nil {
+			if err := f.persistPR(prRow, runs, reviews, threads); err != nil {
 				return err
 			}
 			seen[prKey{Repo: repo, Number: int(p.Number)}] = true
@@ -279,9 +311,27 @@ func extractReviews(conn prSearchReviewConnection) []ReviewData {
 	return reviews
 }
 
+func extractReviewThreads(conn prSearchReviewThreadConnection) []ReviewThreadData {
+	var threads []ReviewThreadData
+	for _, t := range conn.Nodes {
+		body := ""
+		if len(t.Comments.Nodes) > 0 {
+			body = string(t.Comments.Nodes[0].Body)
+		}
+		threads = append(threads, ReviewThreadData{
+			ID:       string(t.ID),
+			Resolved: bool(t.IsResolved),
+			Body:     body,
+			Path:     string(t.Path),
+			Line:     int(t.Line),
+		})
+	}
+	return threads
+}
+
 // persistPR delegates to the shared PersistPR function.
-func (f *MyPullRequestsFetcher) persistPR(pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData) error {
-	return PersistPR(f.store, f.bus, pr, runs, reviews)
+func (f *MyPullRequestsFetcher) persistPR(pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, threads []ReviewThreadData) error {
+	return PersistPR(f.store, f.bus, pr, runs, reviews, threads)
 }
 
 // uriString safely extracts the string representation of a githubv4.URI,

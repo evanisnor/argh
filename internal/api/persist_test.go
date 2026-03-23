@@ -26,7 +26,7 @@ func TestPersistPR_NewPR_EmitsPRUpdated(t *testing.T) {
 	runs := []CheckRunData{{Name: "ci", Status: "COMPLETED", Conclusion: "SUCCESS"}}
 	reviews := []ReviewData{{Login: "bob", State: "APPROVED"}}
 
-	if err := PersistPR(store, pub, pr, runs, reviews); err != nil {
+	if err := PersistPR(store, pub, pr, runs, reviews, nil); err != nil {
 		t.Fatalf("PersistPR error = %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestPersistPR_CIChanged_EmitsCIChanged(t *testing.T) {
 	pr := existing
 	pr.CIState = "passing"
 
-	if err := PersistPR(store, pub, pr, nil, nil); err != nil {
+	if err := PersistPR(store, pub, pr, nil, nil, nil); err != nil {
 		t.Fatalf("PersistPR error = %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestPersistPR_OtherChange_EmitsPRUpdated(t *testing.T) {
 	pr := existing
 	pr.Title = "new"
 
-	if err := PersistPR(store, pub, pr, nil, nil); err != nil {
+	if err := PersistPR(store, pub, pr, nil, nil, nil); err != nil {
 		t.Fatalf("PersistPR error = %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestPersistPR_NoChanges_NoEvents(t *testing.T) {
 	}
 	pub := &StubPublisher{}
 
-	if err := PersistPR(store, pub, existing, nil, nil); err != nil {
+	if err := PersistPR(store, pub, existing, nil, nil, nil); err != nil {
 		t.Fatalf("PersistPR error = %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestPersistPR_GetPRUnexpectedError(t *testing.T) {
 	}
 	pub := &StubPublisher{}
 
-	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil)
+	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, nil)
 	if !errors.Is(err, dbErr) {
 		t.Errorf("error = %v, want to wrap %v", err, dbErr)
 	}
@@ -158,7 +158,7 @@ func TestPersistPR_UpsertPRError(t *testing.T) {
 	store.UpsertPullRequestFunc = func(pr persistence.PullRequest) error { return upsertErr }
 	pub := &StubPublisher{}
 
-	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil)
+	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, nil)
 	if !errors.Is(err, upsertErr) {
 		t.Errorf("error = %v, want to wrap %v", err, upsertErr)
 	}
@@ -171,7 +171,7 @@ func TestPersistPR_UpsertCheckRunError(t *testing.T) {
 	pub := &StubPublisher{}
 
 	runs := []CheckRunData{{Name: "ci", Status: "IN_PROGRESS"}}
-	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, runs, nil)
+	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, runs, nil, nil)
 	if !errors.Is(err, crErr) {
 		t.Errorf("error = %v, want to wrap %v", err, crErr)
 	}
@@ -184,9 +184,22 @@ func TestPersistPR_UpsertReviewerError(t *testing.T) {
 	pub := &StubPublisher{}
 
 	reviews := []ReviewData{{Login: "bob", State: "APPROVED"}}
-	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, reviews)
+	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, reviews, nil)
 	if !errors.Is(err, revErr) {
 		t.Errorf("error = %v, want to wrap %v", err, revErr)
+	}
+}
+
+func TestPersistPR_UpsertReviewThreadError(t *testing.T) {
+	rtErr := errors.New("review thread upsert failed")
+	store := NewStubPRStore()
+	store.UpsertReviewThreadFunc = func(rt persistence.ReviewThread) error { return rtErr }
+	pub := &StubPublisher{}
+
+	threads := []ReviewThreadData{{ID: "RT_1", Resolved: false, Body: "nit", Path: "main.go", Line: 10}}
+	err := PersistPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, threads)
+	if !errors.Is(err, rtErr) {
+		t.Errorf("error = %v, want to wrap %v", err, rtErr)
 	}
 }
 
@@ -204,7 +217,7 @@ func TestPersistRQPR_NewPR_EmitsPRUpdated(t *testing.T) {
 		GlobalID: "PR_1",
 	}
 
-	if err := PersistRQPR(store, pub, pr, nil, nil, nil); err != nil {
+	if err := PersistRQPR(store, pub, pr, nil, nil, nil, nil); err != nil {
 		t.Fatalf("PersistRQPR error = %v", err)
 	}
 
@@ -234,7 +247,7 @@ func TestPersistRQPR_CIChanged_EmitsCIChanged(t *testing.T) {
 	pr := existing
 	pr.CIState = "passing"
 
-	if err := PersistRQPR(store, pub, pr, nil, nil, nil); err != nil {
+	if err := PersistRQPR(store, pub, pr, nil, nil, nil, nil); err != nil {
 		t.Fatalf("PersistRQPR error = %v", err)
 	}
 
@@ -261,7 +274,7 @@ func TestPersistRQPR_NoChanges_NoEvents(t *testing.T) {
 	}
 	pub := &StubPublisher{}
 
-	if err := PersistRQPR(store, pub, existing, nil, nil, nil); err != nil {
+	if err := PersistRQPR(store, pub, existing, nil, nil, nil, nil); err != nil {
 		t.Fatalf("PersistRQPR error = %v", err)
 	}
 
@@ -286,7 +299,7 @@ func TestPersistRQPR_CommitsStoredAsTimelineEvents(t *testing.T) {
 		CommittedDate: githubv4.DateTime{Time: commitTime},
 	}}
 
-	if err := PersistRQPR(store, pub, pr, nil, nil, commits); err != nil {
+	if err := PersistRQPR(store, pub, pr, nil, nil, nil, commits); err != nil {
 		t.Fatalf("PersistRQPR error = %v", err)
 	}
 
@@ -313,7 +326,7 @@ func TestPersistRQPR_GetPRUnexpectedError(t *testing.T) {
 	}
 	pub := &StubPublisher{}
 
-	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, nil)
+	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, nil, nil)
 	if !errors.Is(err, dbErr) {
 		t.Errorf("error = %v, want to wrap %v", err, dbErr)
 	}
@@ -325,7 +338,7 @@ func TestPersistRQPR_UpsertPRError(t *testing.T) {
 	store.UpsertPullRequestFunc = func(pr persistence.PullRequest) error { return upsertErr }
 	pub := &StubPublisher{}
 
-	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, nil)
+	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, nil, nil)
 	if !errors.Is(err, upsertErr) {
 		t.Errorf("error = %v, want to wrap %v", err, upsertErr)
 	}
@@ -338,7 +351,7 @@ func TestPersistRQPR_UpsertCheckRunError(t *testing.T) {
 	pub := &StubPublisher{}
 
 	runs := []CheckRunData{{Name: "ci", Status: "IN_PROGRESS"}}
-	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, runs, nil, nil)
+	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, runs, nil, nil, nil)
 	if !errors.Is(err, crErr) {
 		t.Errorf("error = %v, want to wrap %v", err, crErr)
 	}
@@ -351,9 +364,22 @@ func TestPersistRQPR_UpsertReviewerError(t *testing.T) {
 	pub := &StubPublisher{}
 
 	reviews := []ReviewData{{Login: "bob", State: "APPROVED"}}
-	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, reviews, nil)
+	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, reviews, nil, nil)
 	if !errors.Is(err, revErr) {
 		t.Errorf("error = %v, want to wrap %v", err, revErr)
+	}
+}
+
+func TestPersistRQPR_UpsertReviewThreadError(t *testing.T) {
+	rtErr := errors.New("review thread upsert failed")
+	store := NewStubReviewQueueStore()
+	store.UpsertReviewThreadFunc = func(rt persistence.ReviewThread) error { return rtErr }
+	pub := &StubPublisher{}
+
+	threads := []ReviewThreadData{{ID: "RT_1", Resolved: false, Body: "nit", Path: "main.go", Line: 10}}
+	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, threads, nil)
+	if !errors.Is(err, rtErr) {
+		t.Errorf("error = %v, want to wrap %v", err, rtErr)
 	}
 }
 
@@ -367,7 +393,7 @@ func TestPersistRQPR_InsertTimelineEventError(t *testing.T) {
 		AuthorLogin:   "bob",
 		CommittedDate: githubv4.DateTime{Time: time.Now()},
 	}}
-	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, commits)
+	err := PersistRQPR(store, pub, persistence.PullRequest{Repo: "o/r", Number: 1}, nil, nil, nil, commits)
 	if !errors.Is(err, teErr) {
 		t.Errorf("error = %v, want to wrap %v", err, teErr)
 	}
@@ -391,7 +417,7 @@ func TestPersistRQPR_OtherChange_EmitsPRUpdated(t *testing.T) {
 	pr := existing
 	pr.Title = "new"
 
-	if err := PersistRQPR(store, pub, pr, nil, nil, nil); err != nil {
+	if err := PersistRQPR(store, pub, pr, nil, nil, nil, nil); err != nil {
 		t.Fatalf("PersistRQPR error = %v", err)
 	}
 

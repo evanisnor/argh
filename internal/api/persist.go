@@ -12,7 +12,7 @@ import (
 // PersistPR writes a PR and its associated check runs and reviews to the DB,
 // emitting events for new or changed PRs. This is the shared persist+publish
 // path used by both the GraphQL and gh CLI fetchers.
-func PersistPR(store PRStore, bus Publisher, pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData) error {
+func PersistPR(store PRStore, bus Publisher, pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, threads []ReviewThreadData) error {
 	existing, err := store.GetPullRequest(pr.Repo, pr.Number)
 	isNew := errors.Is(err, sql.ErrNoRows)
 	if err != nil && !isNew {
@@ -46,6 +46,20 @@ func PersistPR(store PRStore, bus Publisher, pr persistence.PullRequest, runs []
 		}
 		if err := store.UpsertReviewer(r); err != nil {
 			return fmt.Errorf("upserting reviewer %s: %w", rev.Login, err)
+		}
+	}
+
+	for _, t := range threads {
+		rt := persistence.ReviewThread{
+			PRID:     pr.ID,
+			ID:       t.ID,
+			Resolved: t.Resolved,
+			Body:     t.Body,
+			Path:     t.Path,
+			Line:     t.Line,
+		}
+		if err := store.UpsertReviewThread(rt); err != nil {
+			return fmt.Errorf("upserting review thread %s: %w", t.ID, err)
 		}
 	}
 
@@ -74,7 +88,7 @@ func PersistPR(store PRStore, bus Publisher, pr persistence.PullRequest, runs []
 
 // PersistRQPR writes a review-queue PR and its associated check runs, reviews,
 // and commit timeline events to the DB, emitting events for new or changed PRs.
-func PersistRQPR(store ReviewQueueStore, bus Publisher, pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, commits []CommitData) error {
+func PersistRQPR(store ReviewQueueStore, bus Publisher, pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, threads []ReviewThreadData, commits []CommitData) error {
 	existing, err := store.GetPullRequest(pr.Repo, pr.Number)
 	isNew := errors.Is(err, sql.ErrNoRows)
 	if err != nil && !isNew {
@@ -108,6 +122,20 @@ func PersistRQPR(store ReviewQueueStore, bus Publisher, pr persistence.PullReque
 		}
 		if err := store.UpsertReviewer(r); err != nil {
 			return fmt.Errorf("upserting reviewer %s: %w", rev.Login, err)
+		}
+	}
+
+	for _, t := range threads {
+		rt := persistence.ReviewThread{
+			PRID:     pr.ID,
+			ID:       t.ID,
+			Resolved: t.Resolved,
+			Body:     t.Body,
+			Path:     t.Path,
+			Line:     t.Line,
+		}
+		if err := store.UpsertReviewThread(rt); err != nil {
+			return fmt.Errorf("upserting review thread %s: %w", t.ID, err)
 		}
 	}
 

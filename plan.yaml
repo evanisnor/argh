@@ -1956,7 +1956,7 @@ tasks:
 
   - id: 121
     title: "Fetch review threads in GraphQL fetchers"
-    status: pending
+    status: done
     depends_on: [118]
     description: >
       Add reviewThreads connection types to prSearchPR and rqPR structs.

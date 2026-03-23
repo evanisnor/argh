@@ -15,6 +15,7 @@ type ReviewQueueStore interface {
 	UpsertPullRequest(pr persistence.PullRequest) error
 	UpsertReviewer(r persistence.Reviewer) error
 	UpsertCheckRun(cr persistence.CheckRun) error
+	UpsertReviewThread(rt persistence.ReviewThread) error
 	InsertTimelineEvent(te persistence.TimelineEvent) error
 	ListPullRequestsNotByAuthor(author string) ([]persistence.PullRequest, error)
 	DeletePullRequest(repo string, number int) (persistence.PullRequest, error)
@@ -80,6 +81,7 @@ type rqPR struct {
 	ReviewRequests  prSearchReviewRequestConnection `graphql:"reviewRequests(first: 10)"`
 	Reviews         prSearchReviewConnection        `graphql:"reviews(first: 20)"`
 	CheckSuites     prSearchCheckSuiteConnection    `graphql:"checkSuites(first: 10)"`
+	ReviewThreads   prSearchReviewThreadConnection `graphql:"reviewThreads(first: 50)"`
 	MergeQueueEntry *prSearchMergeQueueEntry
 	Commits         rqCommitConnection `graphql:"commits(last: 5)"`
 }
@@ -133,6 +135,7 @@ func (f *ReviewQueueFetcher) Fetch(ctx context.Context) error {
 
 			runs := extractCheckRuns(p.CheckSuites)
 			reviews := extractReviews(p.Reviews)
+			threads := extractReviewThreads(p.ReviewThreads)
 			commits := extractRQCommits(p.Commits)
 
 			prID := string(p.ID)
@@ -153,7 +156,7 @@ func (f *ReviewQueueFetcher) Fetch(ctx context.Context) error {
 				GlobalID:       prID,
 			}
 
-			if err := f.persistRQPR(prRow, runs, reviews, commits); err != nil {
+			if err := f.persistRQPR(prRow, runs, reviews, threads, commits); err != nil {
 				return err
 			}
 			seen[prKey{Repo: repo, Number: int(p.Number)}] = true
@@ -203,6 +206,6 @@ func extractRQCommits(conn rqCommitConnection) []CommitData {
 }
 
 // persistRQPR delegates to the shared PersistRQPR function.
-func (f *ReviewQueueFetcher) persistRQPR(pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, commits []CommitData) error {
-	return PersistRQPR(f.store, f.bus, pr, runs, reviews, commits)
+func (f *ReviewQueueFetcher) persistRQPR(pr persistence.PullRequest, runs []CheckRunData, reviews []ReviewData, threads []ReviewThreadData, commits []CommitData) error {
+	return PersistRQPR(f.store, f.bus, pr, runs, reviews, threads, commits)
 }

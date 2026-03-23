@@ -43,13 +43,15 @@ type StubPRStore struct {
 	UpsertPullRequestFunc       func(pr persistence.PullRequest) error
 	UpsertReviewerFunc          func(r persistence.Reviewer) error
 	UpsertCheckRunFunc          func(cr persistence.CheckRun) error
+	UpsertReviewThreadFunc      func(rt persistence.ReviewThread) error
 	ListPullRequestsByAuthorFunc func(author string) ([]persistence.PullRequest, error)
 	DeletePullRequestFunc       func(repo string, number int) (persistence.PullRequest, error)
 
-	UpsertedPRs       []persistence.PullRequest
-	UpsertedCheckRuns []persistence.CheckRun
-	UpsertedReviewers []persistence.Reviewer
-	DeletedPRKeys     []PRKey
+	UpsertedPRs           []persistence.PullRequest
+	UpsertedCheckRuns     []persistence.CheckRun
+	UpsertedReviewers     []persistence.Reviewer
+	UpsertedReviewThreads []persistence.ReviewThread
+	DeletedPRKeys         []PRKey
 }
 
 // PRKey identifies a PR by repo and number for tracking deletions.
@@ -66,6 +68,7 @@ func NewStubPRStore() *StubPRStore {
 		UpsertPullRequestFunc:       func(pr persistence.PullRequest) error { return nil },
 		UpsertReviewerFunc:          func(r persistence.Reviewer) error { return nil },
 		UpsertCheckRunFunc:          func(cr persistence.CheckRun) error { return nil },
+		UpsertReviewThreadFunc:      func(rt persistence.ReviewThread) error { return nil },
 		ListPullRequestsByAuthorFunc: func(author string) ([]persistence.PullRequest, error) { return nil, nil },
 		DeletePullRequestFunc:       func(repo string, number int) (persistence.PullRequest, error) { return persistence.PullRequest{}, nil },
 	}
@@ -88,6 +91,11 @@ func (s *StubPRStore) UpsertCheckRun(cr persistence.CheckRun) error {
 func (s *StubPRStore) UpsertReviewer(r persistence.Reviewer) error {
 	s.UpsertedReviewers = append(s.UpsertedReviewers, r)
 	return s.UpsertReviewerFunc(r)
+}
+
+func (s *StubPRStore) UpsertReviewThread(rt persistence.ReviewThread) error {
+	s.UpsertedReviewThreads = append(s.UpsertedReviewThreads, rt)
+	return s.UpsertReviewThreadFunc(rt)
 }
 
 func (s *StubPRStore) ListPullRequestsByAuthor(author string) ([]persistence.PullRequest, error) {

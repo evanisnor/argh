@@ -826,3 +826,69 @@ func TestMyPullRequestsFetcher_Fetch_CleanupDeleteError(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractReviewThreads(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		conn := prSearchReviewThreadConnection{}
+		got := extractReviewThreads(conn)
+		if len(got) != 0 {
+			t.Errorf("expected 0 threads, got %d", len(got))
+		}
+	})
+
+	t.Run("with comment", func(t *testing.T) {
+		conn := prSearchReviewThreadConnection{
+			Nodes: []prSearchReviewThread{
+				{
+					ID:         "RT_1",
+					IsResolved: true,
+					Path:       "main.go",
+					Line:       42,
+					Comments: prSearchReviewThreadCommentConnection{
+						Nodes: []prSearchReviewThreadComment{
+							{Body: "nit: rename this"},
+						},
+					},
+				},
+			},
+		}
+		got := extractReviewThreads(conn)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 thread, got %d", len(got))
+		}
+		if got[0].ID != "RT_1" {
+			t.Errorf("ID = %q, want %q", got[0].ID, "RT_1")
+		}
+		if !got[0].Resolved {
+			t.Error("Resolved = false, want true")
+		}
+		if got[0].Body != "nit: rename this" {
+			t.Errorf("Body = %q, want %q", got[0].Body, "nit: rename this")
+		}
+		if got[0].Path != "main.go" {
+			t.Errorf("Path = %q, want %q", got[0].Path, "main.go")
+		}
+		if got[0].Line != 42 {
+			t.Errorf("Line = %d, want %d", got[0].Line, 42)
+		}
+	})
+
+	t.Run("no comments", func(t *testing.T) {
+		conn := prSearchReviewThreadConnection{
+			Nodes: []prSearchReviewThread{
+				{
+					ID:   "RT_2",
+					Path: "lib.go",
+					Line: 10,
+				},
+			},
+		}
+		got := extractReviewThreads(conn)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 thread, got %d", len(got))
+		}
+		if got[0].Body != "" {
+			t.Errorf("Body = %q, want empty string", got[0].Body)
+		}
+	})
+}

@@ -99,7 +99,7 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 			GlobalID:       p.ID,
 		}
 
-		if err := api.PersistRQPR(f.store, f.bus, prRow, runs, reviews, commits); err != nil {
+		if err := api.PersistRQPR(f.store, f.bus, prRow, runs, reviews, nil, commits); err != nil {
 			return err
 		}
 		seen[prKey{Repo: repo, Number: p.Number}] = true
