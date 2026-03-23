@@ -1906,3 +1906,15 @@ tasks:
       Add case in notifColor() with faint/neutral color (#888888).
     testing: >
       Verify panels refresh on PRRemoved, verify status text, verify color.
+
+  - id: 117
+    title: "Fix: My Pull Requests panel showing review-requested PRs"
+    status: done
+    depends_on: [17, 100]
+    description: >
+      Mirror the Review Queue panel's existing UI-layer filtering pattern.
+      Add a username field to MyPRsPanel and filter out PRs not authored by the
+      current user in refresh(). Pass creds.Login from main.go.
+    testing: >
+      Table-driven TestMyPRsPanel_ExcludesOtherAuthorPRs covering: matching
+      author included, non-matching excluded, mixed set, empty username bypasses.

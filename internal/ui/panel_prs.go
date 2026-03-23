@@ -47,6 +47,7 @@ type prRow struct {
 type MyPRsPanel struct {
 	reader   PRReader
 	clock    Clock
+	username string
 	rows     []prRow
 	cursor   int
 	flashing map[string]bool // PR ID → flash active
@@ -54,15 +55,16 @@ type MyPRsPanel struct {
 }
 
 // NewMyPRsPanel creates a new My PRs panel backed by the given reader.
-func NewMyPRsPanel(reader PRReader) *MyPRsPanel {
-	return newMyPRsPanelWithClock(reader, realClock{})
+func NewMyPRsPanel(reader PRReader, login string) *MyPRsPanel {
+	return newMyPRsPanelWithClock(reader, login, realClock{})
 }
 
 // newMyPRsPanelWithClock creates a new My PRs panel with an injected clock.
-func newMyPRsPanelWithClock(reader PRReader, clock Clock) *MyPRsPanel {
+func newMyPRsPanelWithClock(reader PRReader, login string, clock Clock) *MyPRsPanel {
 	p := &MyPRsPanel{
 		reader:   reader,
 		clock:    clock,
+		username: login,
 		flashing: make(map[string]bool),
 	}
 	_ = p.refresh()
@@ -242,6 +244,9 @@ func (p *MyPRsPanel) refresh() error {
 
 	rows := make([]prRow, 0, len(prs))
 	for _, pr := range prs {
+		if p.username != "" && pr.Author != p.username {
+			continue
+		}
 		sid, _ := p.reader.GetSessionID(pr.URL)
 		reviewers, _ := p.reader.ListReviewers(pr.ID)
 		approved, changes, comments := 0, 0, 0

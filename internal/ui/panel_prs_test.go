@@ -71,7 +71,7 @@ var (
 )
 
 func makePanel(reader *stubPRReader) *MyPRsPanel {
-	return newMyPRsPanelWithClock(reader, stubClock{now: t2})
+	return newMyPRsPanelWithClock(reader, "", stubClock{now: t2})
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -676,11 +676,11 @@ func TestNewMyPRsPanel(t *testing.T) {
 	reader := newStubPRReader()
 	reader.prs = []persistence.PullRequest{
 		{ID: "pr1", Repo: "repo", Number: 1, Title: "PR",
-			Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+			Status: "open", URL: "https://gh/1", LastActivityAt: t0, Author: "me"},
 	}
 	reader.sessionIDs["https://gh/1"] = "a"
 
-	panel := NewMyPRsPanel(reader)
+	panel := NewMyPRsPanel(reader, "me")
 	if panel == nil {
 		t.Fatal("expected non-nil panel")
 	}
@@ -736,7 +736,7 @@ func TestMyPRsPanel_RefreshErrors(t *testing.T) {
 		reader := newStubPRReader()
 		reader.listPRsErr = fmt.Errorf("db error")
 		// Calling newMyPRsPanelWithClock ignores the error from refresh.
-		panel := newMyPRsPanelWithClock(reader, stubClock{now: t2})
+		panel := newMyPRsPanelWithClock(reader, "", stubClock{now: t2})
 		if panel.HasContent() {
 			t.Error("expected HasContent() == false after ListPullRequests error")
 		}
@@ -749,7 +749,7 @@ func TestMyPRsPanel_RefreshErrors(t *testing.T) {
 				Status: "open", URL: "https://gh/1", LastActivityAt: t0},
 		}
 		reader.listWatchesErr = fmt.Errorf("watches db error")
-		panel := newMyPRsPanelWithClock(reader, stubClock{now: t2})
+		panel := newMyPRsPanelWithClock(reader, "", stubClock{now: t2})
 		if panel.HasContent() {
 			t.Error("expected HasContent() == false after ListWatches error")
 		}
@@ -916,4 +916,74 @@ func TestMyPRsPanel_SelectedPR(t *testing.T) {
 			t.Errorf("SelectedPR().ID = %q, want %q", got.ID, "p2")
 		}
 	})
+}
+
+// TestMyPRsPanel_ExcludesOtherAuthorPRs verifies that PRs not authored by the
+// current user are excluded from the panel when a username is set.
+func TestMyPRsPanel_ExcludesOtherAuthorPRs(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		prs      []persistence.PullRequest
+		wantIDs  []string
+	}{
+		{
+			name:     "matching author included",
+			username: "me",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Author: "me", Repo: "repo", Number: 1, Title: "my PR",
+					Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+			},
+			wantIDs: []string{"pr1"},
+		},
+		{
+			name:     "non-matching author excluded",
+			username: "me",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Author: "other", Repo: "repo", Number: 1, Title: "other PR",
+					Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+			},
+			wantIDs: nil,
+		},
+		{
+			name:     "mixed set",
+			username: "me",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Author: "me", Repo: "repo", Number: 1, Title: "mine",
+					Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+				{ID: "pr2", Author: "other", Repo: "repo", Number: 2, Title: "theirs",
+					Status: "open", URL: "https://gh/2", LastActivityAt: t1},
+				{ID: "pr3", Author: "me", Repo: "repo", Number: 3, Title: "also mine",
+					Status: "open", URL: "https://gh/3", LastActivityAt: t2},
+			},
+			wantIDs: []string{"pr1", "pr3"},
+		},
+		{
+			name:     "empty username bypasses filter",
+			username: "",
+			prs: []persistence.PullRequest{
+				{ID: "pr1", Author: "anyone", Repo: "repo", Number: 1, Title: "PR",
+					Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+			},
+			wantIDs: []string{"pr1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := newStubPRReader()
+			reader.prs = tt.prs
+			for _, pr := range tt.prs {
+				reader.sessionIDs[pr.URL] = "s"
+			}
+			panel := newMyPRsPanelWithClock(reader, tt.username, stubClock{now: t2})
+			if len(panel.rows) != len(tt.wantIDs) {
+				t.Fatalf("got %d rows, want %d", len(panel.rows), len(tt.wantIDs))
+			}
+			for i, wantID := range tt.wantIDs {
+				if panel.rows[i].pr.ID != wantID {
+					t.Errorf("row[%d].pr.ID = %q, want %q", i, panel.rows[i].pr.ID, wantID)
+				}
+			}
+		})
+	}
 }

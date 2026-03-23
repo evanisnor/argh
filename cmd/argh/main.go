@@ -416,7 +416,7 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 
 	// ── UI panels ────────────────────────────────────────────────────────────
 
-	myPRsPanel := ui.NewMyPRsPanel(db)
+	myPRsPanel := ui.NewMyPRsPanel(db, creds.Login)
 	reviewQueuePanel := ui.NewReviewQueuePanel(db, creds.Login)
 	watchesPanel := ui.NewWatchesPanel(db)
 	detailPane := ui.NewDetailPane(resolver)
