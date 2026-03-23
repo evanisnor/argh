@@ -44,6 +44,9 @@ func TestGHCLIReviewQueueFetcher_Fetch_Success(t *testing.T) {
 	if pr.Number != 10 {
 		t.Errorf("Number = %d, want %d", pr.Number, 10)
 	}
+	if pr.Body != "Please review this feature" {
+		t.Errorf("Body = %q, want %q", pr.Body, "Please review this feature")
+	}
 	if pr.Author != "bob" {
 		t.Errorf("Author = %q, want %q", pr.Author, "bob")
 	}
@@ -418,6 +421,7 @@ const rqSearchJSON = `[
 
 // Detail result from gh pr view --json
 const rqDetailJSON = `{
+  "body": "Please review this feature",
   "statusCheckRollup": [],
   "reviews": [],
   "reviewRequests": [{"login": "alice"}],

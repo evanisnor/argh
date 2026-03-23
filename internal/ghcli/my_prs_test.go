@@ -46,6 +46,9 @@ func TestGHCLIMyPRsFetcher_Fetch_Success(t *testing.T) {
 	if pr.Title != "fix: a bug" {
 		t.Errorf("Title = %q, want %q", pr.Title, "fix: a bug")
 	}
+	if pr.Body != "This PR fixes a bug" {
+		t.Errorf("Body = %q, want %q", pr.Body, "This PR fixes a bug")
+	}
 	if pr.Author != "alice" {
 		t.Errorf("Author = %q, want %q", pr.Author, "alice")
 	}
@@ -641,6 +644,7 @@ const myPRsSearchJSON = `[
 
 // Detail result from gh pr view --json
 const myPRsDetailJSON = `{
+  "body": "This PR fixes a bug",
   "statusCheckRollup": [
     {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
   ],

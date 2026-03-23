@@ -72,7 +72,7 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 			continue
 		}
 
-		detail, err := fetchPRDetail(ctx, f.runner, repo, p.Number, "statusCheckRollup,reviews,reviewRequests,commits")
+		detail, err := fetchPRDetail(ctx, f.runner, repo, p.Number, "statusCheckRollup,reviews,reviewRequests,commits,body")
 		if err != nil {
 			slog.Error("ghcli: pr detail fetch failed, persisting with empty detail", "repo", repo, "number", p.Number, "error", err)
 		}
@@ -87,6 +87,7 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 			Repo:           repo,
 			Number:         p.Number,
 			Title:          p.Title,
+			Body:           detail.Body,
 			Status:         api.DerivePRStatus(inMergeQueue, p.IsDraft, reviews),
 			CIState:        api.DeriveCIState(runs),
 			Draft:          p.IsDraft,

@@ -1946,7 +1946,7 @@ tasks:
 
   - id: 120
     title: "Fetch PR body in gh CLI fetchers"
-    status: pending
+    status: done
     depends_on: [118]
     description: >
       Add Body string json:"body" to ghPRDetail. Add body to fields strings.

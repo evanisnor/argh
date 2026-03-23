@@ -38,6 +38,7 @@ type ghRepository struct {
 
 // ghPRDetail models the detail fields fetched via `gh pr view --json ...`.
 type ghPRDetail struct {
+	Body              string            `json:"body"`
 	StatusCheckRollup []ghStatusCheck   `json:"statusCheckRollup"`
 	Reviews           []ghReview        `json:"reviews"`
 	ReviewRequests    []ghReviewRequest `json:"reviewRequests"`
@@ -177,7 +178,7 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 			continue
 		}
 
-		detail, err := fetchPRDetail(ctx, f.runner, repo, p.Number, "statusCheckRollup,reviews,reviewRequests")
+		detail, err := fetchPRDetail(ctx, f.runner, repo, p.Number, "statusCheckRollup,reviews,reviewRequests,body")
 		if err != nil {
 			slog.Error("ghcli: pr detail fetch failed, persisting with empty detail", "repo", repo, "number", p.Number, "error", err)
 		}
@@ -191,6 +192,7 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 			Repo:           repo,
 			Number:         p.Number,
 			Title:          p.Title,
+			Body:           detail.Body,
 			Status:         api.DerivePRStatus(inMergeQueue, p.IsDraft, reviews),
 			CIState:        api.DeriveCIState(runs),
 			Draft:          p.IsDraft,
