@@ -1969,7 +1969,7 @@ tasks:
 
   - id: 122
     title: "Fetch review threads in gh CLI fetchers"
-    status: pending
+    status: done
     depends_on: [121]
     description: >
       Add fetchReviewThreads function using gh api graphql. Add JSON response

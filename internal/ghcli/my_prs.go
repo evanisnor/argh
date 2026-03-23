@@ -101,6 +101,68 @@ func fetchMergeQueueStatus(ctx context.Context, runner CommandRunner, nodeID str
 	return resp.Data.Node.MergeQueueEntry != nil
 }
 
+// ghReviewThreadsResponse models the GraphQL response for review threads.
+type ghReviewThreadsResponse struct {
+	Data struct {
+		Node struct {
+			ReviewThreads struct {
+				Nodes []ghReviewThread `json:"nodes"`
+			} `json:"reviewThreads"`
+		} `json:"node"`
+	} `json:"data"`
+}
+
+type ghReviewThread struct {
+	ID         string `json:"id"`
+	IsResolved bool   `json:"isResolved"`
+	Path       string `json:"path"`
+	Line       int    `json:"line"`
+	Comments   struct {
+		Nodes []struct {
+			Body string `json:"body"`
+		} `json:"nodes"`
+	} `json:"comments"`
+}
+
+// fetchReviewThreads queries review threads for a PR via `gh api graphql`.
+// Errors are logged and treated as empty to avoid blocking the fetch.
+func fetchReviewThreads(ctx context.Context, runner CommandRunner, nodeID string) []api.ReviewThreadData {
+	query := `query($nodeID: ID!) { node(id: $nodeID) { ... on PullRequest { reviewThreads(first: 50) { nodes { id isResolved path line comments(first: 1) { nodes { body } } } } } } }`
+	args := []string{
+		"api", "graphql",
+		"-f", "query=" + query,
+		"-F", "nodeID=" + nodeID,
+	}
+
+	out, err := runner.Run(ctx, args)
+	if err != nil {
+		slog.Debug("ghcli: review threads query failed", "nodeID", nodeID, "error", err)
+		return nil
+	}
+
+	var resp ghReviewThreadsResponse
+	if err := json.Unmarshal(out, &resp); err != nil {
+		slog.Debug("ghcli: review threads response parse failed", "nodeID", nodeID, "error", err)
+		return nil
+	}
+
+	var threads []api.ReviewThreadData
+	for _, t := range resp.Data.Node.ReviewThreads.Nodes {
+		body := ""
+		if len(t.Comments.Nodes) > 0 {
+			body = t.Comments.Nodes[0].Body
+		}
+		threads = append(threads, api.ReviewThreadData{
+			ID:       t.ID,
+			Resolved: t.IsResolved,
+			Body:     body,
+			Path:     t.Path,
+			Line:     t.Line,
+		})
+	}
+	return threads
+}
+
 // fetchPRDetail fetches detail fields for a single PR via `gh pr view`.
 func fetchPRDetail(ctx context.Context, runner CommandRunner, repo string, number int, fields string) (ghPRDetail, error) {
 	args := []string{
@@ -185,6 +247,7 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 
 		runs := convertStatusChecks(detail.StatusCheckRollup)
 		reviews := convertReviews(detail.Reviews)
+		threads := fetchReviewThreads(ctx, f.runner, p.ID)
 		inMergeQueue := fetchMergeQueueStatus(ctx, f.runner, p.ID)
 
 		prRow := persistence.PullRequest{
@@ -204,7 +267,7 @@ func (f *GHCLIMyPRsFetcher) Fetch(ctx context.Context) error {
 			GlobalID:       p.ID,
 		}
 
-		if err := api.PersistPR(f.store, f.bus, prRow, runs, reviews, nil); err != nil {
+		if err := api.PersistPR(f.store, f.bus, prRow, runs, reviews, threads); err != nil {
 			return err
 		}
 		seen[prKey{Repo: repo, Number: p.Number}] = true

@@ -80,6 +80,7 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 		runs := convertStatusChecks(detail.StatusCheckRollup)
 		reviews := convertReviews(detail.Reviews)
 		commits := convertCommits(detail.Commits)
+		threads := fetchReviewThreads(ctx, f.runner, p.ID)
 		inMergeQueue := fetchMergeQueueStatus(ctx, f.runner, p.ID)
 
 		prRow := persistence.PullRequest{
@@ -99,7 +100,7 @@ func (f *GHCLIReviewQueueFetcher) Fetch(ctx context.Context) error {
 			GlobalID:       p.ID,
 		}
 
-		if err := api.PersistRQPR(f.store, f.bus, prRow, runs, reviews, nil, commits); err != nil {
+		if err := api.PersistRQPR(f.store, f.bus, prRow, runs, reviews, threads, commits); err != nil {
 			return err
 		}
 		seen[prKey{Repo: repo, Number: p.Number}] = true

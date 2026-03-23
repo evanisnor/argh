@@ -69,9 +69,9 @@ func TestGHCLIReviewQueueFetcher_Fetch_Success(t *testing.T) {
 		t.Errorf("event type = %v, want %v", pub.Events[0].Type, eventbus.PRUpdated)
 	}
 
-	// Verify three-phase: search call + pr view call + merge queue graphql call
-	if runner.CallCount() != 3 {
-		t.Errorf("expected 3 runner calls (search + view + graphql), got %d", runner.CallCount())
+	// Verify four-phase: search + pr view + review threads graphql + merge queue graphql
+	if runner.CallCount() != 4 {
+		t.Errorf("expected 4 runner calls (search + view + 2x graphql), got %d", runner.CallCount())
 	}
 }
 

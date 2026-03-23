@@ -69,9 +69,9 @@ func TestGHCLIMyPRsFetcher_Fetch_Success(t *testing.T) {
 		t.Errorf("event type = %v, want %v", pub.Events[0].Type, eventbus.PRUpdated)
 	}
 
-	// Verify three-phase: search call + pr view call + merge queue graphql call
-	if runner.CallCount() != 3 {
-		t.Errorf("expected 3 runner calls (search + view + graphql), got %d", runner.CallCount())
+	// Verify four-phase: search + pr view + review threads graphql + merge queue graphql
+	if runner.CallCount() != 4 {
+		t.Errorf("expected 4 runner calls (search + view + 2x graphql), got %d", runner.CallCount())
 	}
 }
 
@@ -488,8 +488,8 @@ func TestGHCLIMyPRsFetcher_Fetch_MergeQueued(t *testing.T) {
 	if store.UpsertedPRs[0].Status != "merge queued" {
 		t.Errorf("Status = %q, want %q", store.UpsertedPRs[0].Status, "merge queued")
 	}
-	if callCount != 1 {
-		t.Errorf("expected 1 graphql call, got %d", callCount)
+	if callCount != 2 {
+		t.Errorf("expected 2 graphql calls (review threads + merge queue), got %d", callCount)
 	}
 }
 
@@ -624,6 +624,113 @@ func TestGHCLIMyPRsFetcher_CleanupDeleteError(t *testing.T) {
 	}
 }
 
+// ── Review thread fetching ──────────────────────────────────────────────────
+
+func TestFetchReviewThreads_Success(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(reviewThreadsGraphQLJSON), nil
+	}
+
+	threads := fetchReviewThreads(context.Background(), runner, "PR_abc")
+	if len(threads) != 2 {
+		t.Fatalf("expected 2 threads, got %d", len(threads))
+	}
+
+	if threads[0].ID != "RT_1" {
+		t.Errorf("threads[0].ID = %q, want %q", threads[0].ID, "RT_1")
+	}
+	if !threads[0].Resolved {
+		t.Error("threads[0].Resolved = false, want true")
+	}
+	if threads[0].Body != "nit: rename this" {
+		t.Errorf("threads[0].Body = %q, want %q", threads[0].Body, "nit: rename this")
+	}
+	if threads[0].Path != "main.go" {
+		t.Errorf("threads[0].Path = %q, want %q", threads[0].Path, "main.go")
+	}
+	if threads[0].Line != 42 {
+		t.Errorf("threads[0].Line = %d, want %d", threads[0].Line, 42)
+	}
+
+	if threads[1].ID != "RT_2" {
+		t.Errorf("threads[1].ID = %q, want %q", threads[1].ID, "RT_2")
+	}
+	if threads[1].Resolved {
+		t.Error("threads[1].Resolved = true, want false")
+	}
+	if threads[1].Body != "needs tests" {
+		t.Errorf("threads[1].Body = %q, want %q", threads[1].Body, "needs tests")
+	}
+}
+
+func TestFetchReviewThreads_Empty(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(`{"data":{"node":{"reviewThreads":{"nodes":[]}}}}`), nil
+	}
+
+	threads := fetchReviewThreads(context.Background(), runner, "PR_abc")
+	if len(threads) != 0 {
+		t.Errorf("expected 0 threads, got %d", len(threads))
+	}
+}
+
+func TestFetchReviewThreads_CommandError(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return nil, errors.New("api error")
+	}
+
+	threads := fetchReviewThreads(context.Background(), runner, "PR_abc")
+	if threads != nil {
+		t.Errorf("expected nil threads on error, got %v", threads)
+	}
+}
+
+func TestFetchReviewThreads_MalformedJSON(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte("{bad"), nil
+	}
+
+	threads := fetchReviewThreads(context.Background(), runner, "PR_abc")
+	if threads != nil {
+		t.Errorf("expected nil threads on malformed JSON, got %v", threads)
+	}
+}
+
+func TestFetchReviewThreads_NoComments(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(`{"data":{"node":{"reviewThreads":{"nodes":[{"id":"RT_1","isResolved":false,"path":"lib.go","line":10,"comments":{"nodes":[]}}]}}}}`), nil
+	}
+
+	threads := fetchReviewThreads(context.Background(), runner, "PR_abc")
+	if len(threads) != 1 {
+		t.Fatalf("expected 1 thread, got %d", len(threads))
+	}
+	if threads[0].Body != "" {
+		t.Errorf("Body = %q, want empty string", threads[0].Body)
+	}
+}
+
+func TestFetchReviewThreads_CorrectArgs(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return []byte(`{"data":{"node":{"reviewThreads":{"nodes":[]}}}}`), nil
+	}
+	fetchReviewThreads(context.Background(), runner, "PR_abc")
+
+	call := runner.FindCall("api", "graphql")
+	if call == nil {
+		t.Fatal("expected api graphql call")
+	}
+	if runner.FindCall("nodeID=PR_abc") == nil {
+		t.Error("expected nodeID=PR_abc in args")
+	}
+}
+
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
 // Search result: only fields supported by gh search prs
@@ -652,4 +759,30 @@ const myPRsDetailJSON = `{
     {"author": {"login": "bob"}, "state": "APPROVED"}
   ],
   "reviewRequests": []
+}`
+
+// GraphQL response for review threads
+const reviewThreadsGraphQLJSON = `{
+  "data": {
+    "node": {
+      "reviewThreads": {
+        "nodes": [
+          {
+            "id": "RT_1",
+            "isResolved": true,
+            "path": "main.go",
+            "line": 42,
+            "comments": {"nodes": [{"body": "nit: rename this"}]}
+          },
+          {
+            "id": "RT_2",
+            "isResolved": false,
+            "path": "lib.go",
+            "line": 10,
+            "comments": {"nodes": [{"body": "needs tests"}]}
+          }
+        ]
+      }
+    }
+  }
 }`
