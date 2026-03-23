@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -49,7 +50,11 @@ func makeDetailPane(resolver ThreadResolver, mdOut string) *DetailPane {
 }
 
 func makePR(id, title string) persistence.PullRequest {
-	return persistence.PullRequest{ID: id, Title: title, Repo: "owner/repo", Number: 1}
+	return persistence.PullRequest{
+		ID: id, Title: title, Repo: "owner/repo", Number: 1,
+		Author: "alice", Status: "open", CIState: "passing",
+		CreatedAt: time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
+	}
 }
 
 func makeThread(id, path string, resolved bool) persistence.ReviewThread {
@@ -518,6 +523,126 @@ func TestDetailPane_ThreadNavigationInView(t *testing.T) {
 	view := p.View()
 	if !strings.Contains(view, "> [thread 1]") {
 		t.Errorf("expected '> [thread 1]' marker for focused thread; got:\n%s", view)
+	}
+}
+
+// TestDetailPane_MetadataHeader verifies the metadata header renders all fields.
+func TestDetailPane_MetadataHeader(t *testing.T) {
+	p := makeDetailPane(nil, "md")
+
+	pr := persistence.PullRequest{
+		ID: "pr1", Title: "Test PR", Repo: "owner/repo", Number: 42,
+		Author: "alice", Status: "approved", CIState: "passing", Draft: false,
+		CreatedAt: time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
+	}
+	p = sendMsg(p, makeFocusMsg(pr, nil))
+
+	view := p.View()
+	for _, want := range []string{
+		"owner/repo #42",
+		"@alice",
+		"approved",
+		"passing",
+		"Draft:   no",
+		"2024-01-15",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected %q in metadata header; got:\n%s", want, view)
+		}
+	}
+}
+
+// TestDetailPane_MetadataHeader_DraftPR verifies draft shows "yes".
+func TestDetailPane_MetadataHeader_DraftPR(t *testing.T) {
+	p := makeDetailPane(nil, "md")
+
+	pr := persistence.PullRequest{
+		ID: "pr1", Title: "Draft PR", Repo: "o/r", Number: 1,
+		Author: "bob", Status: "draft", CIState: "none", Draft: true,
+		CreatedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+	}
+	p = sendMsg(p, makeFocusMsg(pr, nil))
+
+	view := p.View()
+	if !strings.Contains(view, "Draft:   yes") {
+		t.Errorf("expected 'Draft:   yes' for draft PR; got:\n%s", view)
+	}
+}
+
+// TestDetailPane_BodyRendered verifies PR body is rendered instead of title.
+func TestDetailPane_BodyRendered(t *testing.T) {
+	const renderedBody = "RENDERED_BODY"
+	p := makeDetailPane(nil, renderedBody)
+
+	pr := makePR("pr1", "My Title")
+	pr.Body = "This is the **body** of the PR"
+	p = sendMsg(p, makeFocusMsg(pr, nil))
+
+	view := p.View()
+	if !strings.Contains(view, renderedBody) {
+		t.Errorf("expected rendered body in view; got:\n%s", view)
+	}
+}
+
+// TestDetailPane_EmptyBodyFallsBackToTitle verifies fallback to title when body is empty.
+func TestDetailPane_EmptyBodyFallsBackToTitle(t *testing.T) {
+	const renderedTitle = "RENDERED_TITLE"
+	p := makeDetailPane(nil, renderedTitle)
+
+	pr := makePR("pr1", "Fallback Title")
+	pr.Body = ""
+	p = sendMsg(p, makeFocusMsg(pr, nil))
+
+	view := p.View()
+	if !strings.Contains(view, renderedTitle) {
+		t.Errorf("expected rendered title as fallback; got:\n%s", view)
+	}
+}
+
+// TestDetailPane_MetadataHeader_ZeroCreatedAt verifies created date is omitted when zero.
+func TestDetailPane_MetadataHeader_ZeroCreatedAt(t *testing.T) {
+	p := makeDetailPane(nil, "md")
+
+	pr := persistence.PullRequest{
+		ID: "pr1", Title: "PR", Repo: "o/r", Number: 1,
+		Author: "alice", Status: "open", CIState: "none",
+	}
+	p = sendMsg(p, makeFocusMsg(pr, nil))
+
+	view := p.View()
+	if strings.Contains(view, "Created:") {
+		t.Errorf("expected no Created: line for zero time; got:\n%s", view)
+	}
+}
+
+// TestDetailPane_MetadataHeader_StatusVariants verifies different status/CI combinations render.
+func TestDetailPane_MetadataHeader_StatusVariants(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		ciState string
+	}{
+		{"open-running", "open", "running"},
+		{"approved-passing", "approved", "passing"},
+		{"changes-requested-failing", "changes requested", "failing"},
+		{"merge-queued-passing", "merge queued", "passing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := makeDetailPane(nil, "md")
+			pr := makePR("pr1", "PR")
+			pr.Status = tt.status
+			pr.CIState = tt.ciState
+			p = sendMsg(p, makeFocusMsg(pr, nil))
+
+			view := p.View()
+			if !strings.Contains(view, tt.status) {
+				t.Errorf("expected status %q in view; got:\n%s", tt.status, view)
+			}
+			if !strings.Contains(view, tt.ciState) {
+				t.Errorf("expected CI state %q in view; got:\n%s", tt.ciState, view)
+			}
+		})
 	}
 }
 

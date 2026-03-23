@@ -186,9 +186,25 @@ func (p *DetailPane) refreshViewport() {
 func (p *DetailPane) buildContent() string {
 	var sb strings.Builder
 
+	// ── Metadata header ───────────────────────────────────────────────────────
+	sb.WriteString(fmt.Sprintf("── %s #%d ", p.pr.Repo, p.pr.Number))
+	sb.WriteString("─────────────────────────────────────────────\n")
+	draft := "no"
+	if p.pr.Draft {
+		draft = "yes"
+	}
+	sb.WriteString(fmt.Sprintf("  Author:  @%-16s Status:  %s\n", p.pr.Author, p.pr.Status))
+	sb.WriteString(fmt.Sprintf("  CI:      %-16s  Draft:   %s\n", p.pr.CIState, draft))
+	if !p.pr.CreatedAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("  Created: %s\n", p.pr.CreatedAt.Format("2006-01-02")))
+	}
+
 	// ── PR description (Markdown) ─────────────────────────────────────────────
-	sb.WriteString("── Description ─────────────────────────────────────────────\n")
-	desc := p.pr.Title
+	sb.WriteString("\n── Description ─────────────────────────────────────────────\n")
+	desc := p.pr.Body
+	if desc == "" {
+		desc = p.pr.Title
+	}
 	if p.mdRenderer != nil {
 		rendered, err := p.mdRenderer.Render(desc)
 		if err == nil && strings.TrimSpace(rendered) != "" {

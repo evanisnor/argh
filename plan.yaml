@@ -1980,7 +1980,7 @@ tasks:
 
   - id: 123
     title: "Display body and metadata in the detail pane"
-    status: pending
+    status: done
     depends_on: [118]
     description: >
       Replace current Description section in buildContent() with metadata header
