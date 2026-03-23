@@ -173,7 +173,8 @@ var setupGHCLIVerify = func(ctx context.Context) (string, error) {
 }
 
 // productionDeps returns a tuiDeps wired to real OS resources.
-func productionDeps() tuiDeps {
+// It is a variable so tests can override it without touching the real filesystem.
+var productionDeps = func() tuiDeps {
 	cfg, _ := config.Load(config.OSFilesystem{})
 	browser := &osBrowserOpener{}
 	return tuiDeps{

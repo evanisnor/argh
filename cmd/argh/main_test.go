@@ -979,6 +979,17 @@ func TestTUILauncher_DefaultBody(t *testing.T) {
 	setupRunProgram = func(m tea.Model) (tea.Model, error) { return m, nil }
 	defer func() { setupRunProgram = origSetup }()
 
+	// Stub productionDeps so the test never writes to the real config dir.
+	origDeps := productionDeps
+	productionDeps = func() tuiDeps {
+		deps := origDeps()
+		deps.deleteToken = func() error { return nil }
+		deps.saveToken = func(string) error { return nil }
+		deps.saveTokenType = func(config.TokenType) error { return nil }
+		return deps
+	}
+	defer func() { productionDeps = origDeps }()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_ = tuiLauncher(ctx, "test")
