@@ -108,6 +108,8 @@ func (d *DB) migrate() error {
 	if err != nil {
 		return fmt.Errorf("running schema migration: %w", err)
 	}
+	// Add body column to existing databases. Ignore "duplicate column name" errors.
+	_, _ = d.db.Exec(`ALTER TABLE pull_requests ADD COLUMN body TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -117,6 +119,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     repo           TEXT NOT NULL,
     number         INTEGER NOT NULL,
     title          TEXT NOT NULL,
+    body           TEXT NOT NULL DEFAULT '',
     status         TEXT NOT NULL,
     ci_state       TEXT NOT NULL,
     draft          INTEGER NOT NULL DEFAULT 0,
@@ -202,6 +205,7 @@ type PullRequest struct {
 	Repo           string
 	Number         int
 	Title          string
+	Body           string
 	Status         string
 	CIState        string
 	Draft          bool
@@ -217,12 +221,13 @@ type PullRequest struct {
 func (d *DB) UpsertPullRequest(pr PullRequest) error {
 	_, err := d.db.Exec(`
 		INSERT INTO pull_requests
-			(id, repo, number, title, status, ci_state, draft, author,
+			(id, repo, number, title, body, status, ci_state, draft, author,
 			 created_at, updated_at, last_activity_at, url, global_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repo, number) DO UPDATE SET
 			id             = excluded.id,
 			title          = excluded.title,
+			body           = excluded.body,
 			status         = excluded.status,
 			ci_state       = excluded.ci_state,
 			draft          = excluded.draft,
@@ -232,7 +237,7 @@ func (d *DB) UpsertPullRequest(pr PullRequest) error {
 			last_activity_at = excluded.last_activity_at,
 			url            = excluded.url,
 			global_id      = excluded.global_id
-	`, pr.ID, pr.Repo, pr.Number, pr.Title, pr.Status, pr.CIState,
+	`, pr.ID, pr.Repo, pr.Number, pr.Title, pr.Body, pr.Status, pr.CIState,
 		boolToInt(pr.Draft), pr.Author,
 		pr.CreatedAt.UTC(), pr.UpdatedAt.UTC(), pr.LastActivityAt.UTC(),
 		pr.URL, pr.GlobalID,
@@ -243,7 +248,7 @@ func (d *DB) UpsertPullRequest(pr PullRequest) error {
 // GetPullRequest returns the pull request identified by repo and number.
 func (d *DB) GetPullRequest(repo string, number int) (PullRequest, error) {
 	row := d.db.QueryRow(`
-		SELECT id, repo, number, title, status, ci_state, draft, author,
+		SELECT id, repo, number, title, body, status, ci_state, draft, author,
 		       created_at, updated_at, last_activity_at, url, global_id
 		FROM pull_requests
 		WHERE repo = ? AND number = ?
@@ -254,7 +259,7 @@ func (d *DB) GetPullRequest(repo string, number int) (PullRequest, error) {
 // ListPullRequests returns all pull request rows.
 func (d *DB) ListPullRequests() ([]PullRequest, error) {
 	rows, err := d.db.Query(`
-		SELECT id, repo, number, title, status, ci_state, draft, author,
+		SELECT id, repo, number, title, body, status, ci_state, draft, author,
 		       created_at, updated_at, last_activity_at, url, global_id
 		FROM pull_requests
 	`)
@@ -269,7 +274,7 @@ func scanPR(row *sql.Row) (PullRequest, error) {
 	var pr PullRequest
 	var draft int
 	err := row.Scan(
-		&pr.ID, &pr.Repo, &pr.Number, &pr.Title, &pr.Status, &pr.CIState,
+		&pr.ID, &pr.Repo, &pr.Number, &pr.Title, &pr.Body, &pr.Status, &pr.CIState,
 		&draft, &pr.Author,
 		&pr.CreatedAt, &pr.UpdatedAt, &pr.LastActivityAt,
 		&pr.URL, &pr.GlobalID,
@@ -287,7 +292,7 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		var pr PullRequest
 		var draft int
 		if err := rows.Scan(
-			&pr.ID, &pr.Repo, &pr.Number, &pr.Title, &pr.Status, &pr.CIState,
+			&pr.ID, &pr.Repo, &pr.Number, &pr.Title, &pr.Body, &pr.Status, &pr.CIState,
 			&draft, &pr.Author,
 			&pr.CreatedAt, &pr.UpdatedAt, &pr.LastActivityAt,
 			&pr.URL, &pr.GlobalID,
@@ -303,7 +308,7 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 // ListPullRequestsByAuthor returns all pull requests authored by the given user.
 func (d *DB) ListPullRequestsByAuthor(author string) ([]PullRequest, error) {
 	rows, err := d.db.Query(`
-		SELECT id, repo, number, title, status, ci_state, draft, author,
+		SELECT id, repo, number, title, body, status, ci_state, draft, author,
 		       created_at, updated_at, last_activity_at, url, global_id
 		FROM pull_requests
 		WHERE author = ?
@@ -318,7 +323,7 @@ func (d *DB) ListPullRequestsByAuthor(author string) ([]PullRequest, error) {
 // ListPullRequestsNotByAuthor returns all pull requests NOT authored by the given user.
 func (d *DB) ListPullRequestsNotByAuthor(author string) ([]PullRequest, error) {
 	rows, err := d.db.Query(`
-		SELECT id, repo, number, title, status, ci_state, draft, author,
+		SELECT id, repo, number, title, body, status, ci_state, draft, author,
 		       created_at, updated_at, last_activity_at, url, global_id
 		FROM pull_requests
 		WHERE author != ?

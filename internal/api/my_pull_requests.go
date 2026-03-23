@@ -345,6 +345,7 @@ func DerivePRStatus(inMergeQueue, isDraft bool, reviews []ReviewData) string {
 func PRsEqual(a, b persistence.PullRequest) bool {
 	return a.ID == b.ID &&
 		a.Title == b.Title &&
+		a.Body == b.Body &&
 		a.Status == b.Status &&
 		a.CIState == b.CIState &&
 		a.Draft == b.Draft &&

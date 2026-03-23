@@ -288,6 +288,7 @@ func TestPullRequest_RoundTrip(t *testing.T) {
 		Repo:           "owner/repo",
 		Number:         42,
 		Title:          "My PR",
+		Body:           "This is the PR body with **markdown**.",
 		Status:         "open",
 		CIState:        "passing",
 		Draft:          false,
@@ -308,7 +309,7 @@ func TestPullRequest_RoundTrip(t *testing.T) {
 		t.Fatalf("GetPullRequest() error: %v", err)
 	}
 
-	if got.ID != pr.ID || got.Title != pr.Title || got.Draft != pr.Draft {
+	if got.ID != pr.ID || got.Title != pr.Title || got.Body != pr.Body || got.Draft != pr.Draft {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", got, pr)
 	}
 }
@@ -348,6 +349,28 @@ func TestPullRequest_UpdateExistingRow(t *testing.T) {
 	}
 	if got.Title != "New title" || got.CIState != "passing" || got.Draft != false {
 		t.Errorf("update did not apply: got %+v", got)
+	}
+}
+
+func TestPullRequest_BodyDefaultsToEmpty(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-nobody", Repo: "r/r", Number: 1, Title: "No Body",
+		Status: "open", CIState: "none", Author: "a",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+		URL: "https://github.com/r/r/pull/1", GlobalID: "g",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+	got, err := db.GetPullRequest("r/r", 1)
+	if err != nil {
+		t.Fatalf("GetPullRequest: %v", err)
+	}
+	if got.Body != "" {
+		t.Errorf("Body = %q, want empty string", got.Body)
 	}
 }
 
@@ -410,7 +433,7 @@ func TestListPullRequests_QueryError(t *testing.T) {
 
 func TestScanPRs_ScanError(t *testing.T) {
 	db := openTestDB(t)
-	// Query a single-column table — scanPRs expects 13 columns, so Scan errors.
+	// Query a single-column table — scanPRs expects 14 columns, so Scan errors.
 	if _, err := db.db.Exec(`CREATE TEMP TABLE one_col (val TEXT)`); err != nil {
 		t.Fatalf("create temp table: %v", err)
 	}

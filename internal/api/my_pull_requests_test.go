@@ -630,6 +630,7 @@ func TestPRsEqual(t *testing.T) {
 	}{
 		{"ID", differ(func(p *persistence.PullRequest) { p.ID = "PR_2" })},
 		{"Title", differ(func(p *persistence.PullRequest) { p.Title = "other" })},
+		{"Body", differ(func(p *persistence.PullRequest) { p.Body = "different body" })},
 		{"Status", differ(func(p *persistence.PullRequest) { p.Status = "draft" })},
 		{"CIState", differ(func(p *persistence.PullRequest) { p.CIState = "failing" })},
 		{"Draft", differ(func(p *persistence.PullRequest) { p.Draft = true })},
