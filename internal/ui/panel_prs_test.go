@@ -417,6 +417,25 @@ func TestMyPRsPanel_DBEventMsg_NoFlashWithoutPR(t *testing.T) {
 	}
 }
 
+// TestMyPRsPanel_DBEventMsg_PRRemoved_RefreshesNoFlash verifies that a PRRemoved
+// event triggers a refresh but does not set flash (After is nil).
+func TestMyPRsPanel_DBEventMsg_PRRemoved_RefreshesNoFlash(t *testing.T) {
+	reader := newStubPRReader()
+	panel := makePanel(reader)
+
+	msg := DBEventMsg{Event: eventbus.Event{
+		Type:   eventbus.PRRemoved,
+		Before: persistence.PullRequest{ID: "pr1", Number: 1},
+		After:  nil,
+	}}
+	updated, _ := panel.Update(msg)
+	updatedPanel := updated.(*MyPRsPanel)
+
+	if len(updatedPanel.flashing) != 0 {
+		t.Errorf("expected no flashing entries for PRRemoved, got: %v", updatedPanel.flashing)
+	}
+}
+
 // TestMyPRsPanel_MoveFocus verifies j/k navigation stays within bounds.
 func TestMyPRsPanel_MoveFocus(t *testing.T) {
 	reader := newStubPRReader()

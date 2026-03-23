@@ -1898,7 +1898,7 @@ tasks:
 
   - id: 116
     title: "Handle PRRemoved in UI"
-    status: pending
+    status: done
     depends_on: [110]
     description: >
       Add PRRemoved to the event type case in panel_prs.go and panel_reviews.go Update().

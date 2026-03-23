@@ -400,6 +400,15 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		m.statusEventType = e.Type
 		m.lastEventTime = m.clock.Now()
 
+	case eventbus.PRRemoved:
+		var c1, c2 tea.Cmd
+		m.myPRs, c1 = m.myPRs.Update(DBEventMsg{Event: e})
+		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
+		cmds = append(cmds, c1, c2)
+		m.statusText = statusTextForEvent(e)
+		m.statusEventType = e.Type
+		m.lastEventTime = m.clock.Now()
+
 	case eventbus.WatchFired:
 		var c tea.Cmd
 		m.watches, c = m.watches.Update(DBEventMsg{Event: e})
@@ -446,6 +455,11 @@ func statusTextForEvent(e eventbus.Event) string {
 			return fmt.Sprintf("● PR #%d review changed", pr.Number)
 		}
 		return "● Review changed"
+	case eventbus.PRRemoved:
+		if pr, ok := e.Before.(persistence.PullRequest); ok {
+			return fmt.Sprintf("PR #%d removed", pr.Number)
+		}
+		return "PR removed"
 	case eventbus.WatchFired:
 		return "● Watch fired"
 	default:
@@ -490,6 +504,8 @@ func notifColor(eventType eventbus.EventType, statusText string) lipgloss.Color 
 		return lipgloss.Color("#FFC107") // yellow
 	case eventbus.SSORequired:
 		return lipgloss.Color("#FFC107") // yellow
+	case eventbus.PRRemoved:
+		return lipgloss.Color("#888888") // faint/neutral
 	default:
 		return lipgloss.Color("#42A5F5") // blue
 	}

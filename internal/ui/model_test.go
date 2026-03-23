@@ -371,6 +371,28 @@ func TestDBEvent_ReviewChanged_DispatchesToMyPRsAndReviewQueue(t *testing.T) {
 	}
 }
 
+// TestDBEvent_PRRemoved_DispatchesToMyPRsAndReviewQueue verifies routing of PRRemoved events.
+func TestDBEvent_PRRemoved_DispatchesToMyPRsAndReviewQueue(t *testing.T) {
+	myPRs := newStub("myPRs", true)
+	rq := newStub("reviewQueue", true)
+	watches := newStub("watches", false)
+
+	m, _ := newTestModel(myPRs, rq, watches, newStub("detail", false), newStub("cmdBar", false))
+
+	e := eventbus.Event{Type: eventbus.PRRemoved, Before: persistence.PullRequest{Number: 42}}
+	m = applyMsg(m, DBEventMsg{Event: e})
+
+	if m.myPRs.(*stubSubModel).lastMsg == nil {
+		t.Error("myPRs did not receive the PRRemoved message")
+	}
+	if m.reviewQueue.(*stubSubModel).lastMsg == nil {
+		t.Error("reviewQueue did not receive the PRRemoved message")
+	}
+	if m.watches.(*stubSubModel).lastMsg != nil {
+		t.Error("watches should NOT receive PRRemoved message")
+	}
+}
+
 // TestDBEvent_WatchFired_DispatchesToWatchesOnly verifies that a WatchFired
 // event is routed exclusively to the Watches sub-model.
 func TestDBEvent_WatchFired_DispatchesToWatchesOnly(t *testing.T) {
@@ -1007,6 +1029,15 @@ func TestStatusTextForEvent_WithPRPayload(t *testing.T) {
 			wantContain: "#99",
 		},
 	}
+	// PRRemoved uses Before instead of After
+	t.Run("PRRemoved includes PR number", func(t *testing.T) {
+		e := eventbus.Event{Type: eventbus.PRRemoved, Before: persistence.PullRequest{Number: 55}}
+		got := statusTextForEvent(e)
+		if !strings.Contains(got, "#55") {
+			t.Errorf("statusTextForEvent() = %q, want to contain %q", got, "#55")
+		}
+	})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := eventbus.Event{Type: tt.eventType, After: tt.pr}
@@ -1029,6 +1060,7 @@ func TestStatusTextForEvent_WithoutPRPayload(t *testing.T) {
 		{"pr_updated", eventbus.PRUpdated, "PR"},
 		{"ci_changed", eventbus.CIChanged, "CI"},
 		{"review_changed", eventbus.ReviewChanged, "Review"},
+		{"pr_removed", eventbus.PRRemoved, "PR removed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1141,6 +1173,7 @@ func TestNotifColor(t *testing.T) {
 		{"Rate limit warning → yellow", eventbus.RateLimitWarning, "⚠ API rate limit low", lipgloss.Color("#FFC107")},
 		{"SSO required → yellow", eventbus.SSORequired, "SSO required for acme", lipgloss.Color("#FFC107")},
 		{"PR updated → blue", eventbus.PRUpdated, "● PR #1 updated", lipgloss.Color("#42A5F5")},
+		{"PR removed → faint", eventbus.PRRemoved, "PR #1 removed", lipgloss.Color("#888888")},
 		{"Unknown type → blue", "UNKNOWN", "", lipgloss.Color("#42A5F5")},
 	}
 	for _, tt := range tests {
@@ -1185,6 +1218,7 @@ func TestDBEvent_SetsStatusEventType(t *testing.T) {
 		{eventbus.PRUpdated, nil},
 		{eventbus.CIChanged, nil},
 		{eventbus.ReviewChanged, nil},
+		{eventbus.PRRemoved, nil},
 		{eventbus.WatchFired, nil},
 		{eventbus.RateLimitWarning, nil},
 		{eventbus.SSORequired, api.SSOInfo{OrgName: "org", AuthorizationURL: "https://example.com"}},
