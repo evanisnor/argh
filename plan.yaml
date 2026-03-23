@@ -1826,3 +1826,83 @@ tasks:
       referenced after tasks 107 and 108.
     testing: >
       go build ./... and go test ./... pass cleanly. 100% coverage maintained.
+
+  # ─── Phase 25: Stale PR Cleanup & Merge Queue Detection ────────────────────
+
+  - id: 110
+    title: "Add PRRemoved event type"
+    status: done
+    depends_on: [5]
+    description: >
+      Add PRRemoved EventType = "PR_REMOVED" constant to internal/eventbus/bus.go.
+    testing: >
+      No new tests needed — existing bus tests prove pub/sub works for any EventType.
+
+  - id: 111
+    title: "Add delete + list-by-author methods to persistence"
+    status: done
+    depends_on: [4]
+    description: >
+      Add three methods to internal/persistence/db.go:
+      ListPullRequestsByAuthor(author string) — WHERE author = ?
+      ListPullRequestsNotByAuthor(author string) — WHERE author != ?
+      DeletePullRequest(repo string, number int) — looks up the row, then in a transaction
+      deletes from reviewers, check_runs, review_threads, timeline_events, session_ids (by pr_url),
+      and pull_requests. Returns the deleted PR for event emission. Returns sql.ErrNoRows if not found.
+    testing: >
+      Table-driven covering happy path, not-found, related row cleanup, error paths.
+
+  - id: 112
+    title: "Extend store interfaces and stubs"
+    status: done
+    depends_on: [111]
+    description: >
+      Add ListPullRequestsByAuthor and DeletePullRequest to PRStore interface.
+      Add ListPullRequestsNotByAuthor and DeletePullRequest to ReviewQueueStore interface.
+      Add corresponding fields/methods to StubPRStore and StubReviewQueueStore in testing.go.
+    testing: >
+      No separate tests — used by fetcher tests.
+
+  - id: 113
+    title: "Add stale cleanup to GraphQL fetchers"
+    status: done
+    depends_on: [110, 112]
+    description: >
+      In MyPullRequestsFetcher.Fetch(): build seen set during pagination loop, then call
+      cleanupStalePRs() which lists owned PRs via ListPullRequestsByAuthor, deletes any not
+      in seen, and publishes PRRemoved events. Same pattern in ReviewQueueFetcher using
+      ListPullRequestsNotByAuthor. Skip cleanup if API call fails (don't delete PRs on error).
+    testing: >
+      Verify stale PRs are deleted, events emitted, kept PRs untouched, API error skips cleanup.
+
+  - id: 114
+    title: "Add stale cleanup to ghcli fetchers"
+    status: done
+    depends_on: [110, 112]
+    description: >
+      Same seen-set + cleanup pattern in GHCLIMyPRsFetcher and GHCLIReviewQueueFetcher.
+    testing: >
+      Same pattern as Task 113.
+
+  - id: 115
+    title: "Add merge queue detection to ghcli fetchers"
+    status: pending
+    depends_on: [87, 88]
+    description: >
+      Since mergeQueueEntry is not a supported gh pr view --json field, add a
+      fetchMergeQueueStatus function that uses gh api graphql to query
+      mergeQueueEntry { id } for a PR given its GraphQL node ID. Call it from both
+      ghcli fetchers during the detail phase and pass the result to DerivePRStatus.
+    testing: >
+      Add test case where mergeQueueEntry is non-null, verify status is "merge queued".
+
+  - id: 116
+    title: "Handle PRRemoved in UI"
+    status: pending
+    depends_on: [110]
+    description: >
+      Add PRRemoved to the event type case in panel_prs.go and panel_reviews.go Update().
+      Add PRRemoved case in model.go handleDBEvent() and statusTextForEvent().
+      Add case in notifColor() with faint/neutral color (#888888).
+    testing: >
+      Verify panels refresh on PRRemoved, verify status text, verify color.

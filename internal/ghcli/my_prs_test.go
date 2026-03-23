@@ -394,6 +394,137 @@ func TestConvertReviews_Empty(t *testing.T) {
 	}
 }
 
+// ── Stale PR cleanup ────────────────────────────────────────────────────────
+
+func TestGHCLIMyPRsFetcher_CleansUpStalePRs(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte(myPRsSearchJSON), nil
+		}
+		return []byte(myPRsDetailJSON), nil
+	}
+	stalePR := persistence.PullRequest{Repo: "owner/old", Number: 99, Author: "alice"}
+	keptPR := persistence.PullRequest{Repo: "owner/repo", Number: 42, Author: "alice"}
+	store := api.NewStubPRStore()
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{stalePR, keptPR}, nil
+	}
+	store.DeletePullRequestFunc = func(repo string, number int) (persistence.PullRequest, error) {
+		return stalePR, nil
+	}
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIMyPRsFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch error = %v", err)
+	}
+
+	// Only the stale PR should be deleted
+	if len(store.DeletedPRKeys) != 1 {
+		t.Fatalf("expected 1 deleted PR, got %d", len(store.DeletedPRKeys))
+	}
+	if store.DeletedPRKeys[0].Repo != "owner/old" || store.DeletedPRKeys[0].Number != 99 {
+		t.Errorf("deleted wrong PR: %+v", store.DeletedPRKeys[0])
+	}
+
+	// Should have PRUpdated (from persist) + PRRemoved (from cleanup)
+	var removed []eventbus.Event
+	for _, e := range pub.Events {
+		if e.Type == eventbus.PRRemoved {
+			removed = append(removed, e)
+		}
+	}
+	if len(removed) != 1 {
+		t.Fatalf("expected 1 PRRemoved event, got %d", len(removed))
+	}
+	if removed[0].Before.(persistence.PullRequest).Repo != "owner/old" {
+		t.Errorf("PRRemoved Before = %+v", removed[0].Before)
+	}
+	if removed[0].After != nil {
+		t.Error("PRRemoved After should be nil")
+	}
+}
+
+func TestGHCLIMyPRsFetcher_NoCleanupOnSearchError(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, _ []string) ([]byte, error) {
+		return nil, errors.New("search failed")
+	}
+	store := api.NewStubPRStore()
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		t.Error("ListPullRequestsByAuthor should not be called when search fails")
+		return nil, nil
+	}
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIMyPRsFetcher(runner, store, pub, "alice")
+	_ = f.Fetch(context.Background())
+
+	if len(store.DeletedPRKeys) != 0 {
+		t.Errorf("expected 0 deletions, got %d", len(store.DeletedPRKeys))
+	}
+}
+
+func TestGHCLIMyPRsFetcher_CleanupListError(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte("[]"), nil
+		}
+		return nil, fmt.Errorf("unexpected: %v", args)
+	}
+	store := api.NewStubPRStore()
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return nil, errors.New("list failed")
+	}
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIMyPRsFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch error = %v", err)
+	}
+
+	if len(store.DeletedPRKeys) != 0 {
+		t.Errorf("expected 0 deletions on list error, got %d", len(store.DeletedPRKeys))
+	}
+}
+
+func TestGHCLIMyPRsFetcher_CleanupDeleteError(t *testing.T) {
+	runner := NewStubCommandRunner()
+	runner.RunFunc = func(_ context.Context, args []string) ([]byte, error) {
+		if args[0] == "search" {
+			return []byte("[]"), nil
+		}
+		return nil, fmt.Errorf("unexpected: %v", args)
+	}
+	stalePR := persistence.PullRequest{Repo: "owner/gone", Number: 77, Author: "alice"}
+	store := api.NewStubPRStore()
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{stalePR}, nil
+	}
+	store.DeletePullRequestFunc = func(repo string, number int) (persistence.PullRequest, error) {
+		return persistence.PullRequest{}, errors.New("delete failed")
+	}
+	pub := &api.StubPublisher{}
+
+	f := NewGHCLIMyPRsFetcher(runner, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch error = %v", err)
+	}
+
+	// Delete was attempted
+	if len(store.DeletedPRKeys) != 1 {
+		t.Fatalf("expected 1 delete attempt, got %d", len(store.DeletedPRKeys))
+	}
+	// No PRRemoved event because delete failed
+	for _, e := range pub.Events {
+		if e.Type == eventbus.PRRemoved {
+			t.Error("should not emit PRRemoved when delete fails")
+		}
+	}
+}
+
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
 // Search result: only fields supported by gh search prs
