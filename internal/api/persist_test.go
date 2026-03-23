@@ -402,3 +402,33 @@ func TestPersistRQPR_OtherChange_EmitsPRUpdated(t *testing.T) {
 		t.Errorf("event type = %v, want %v", pub.Events[0].Type, eventbus.PRUpdated)
 	}
 }
+
+// ── Stub defaults ────────────────────────────────────────────────────────────
+
+func TestStubPRStore_DefaultsSucceed(t *testing.T) {
+	s := NewStubPRStore()
+
+	prs, err := s.ListPullRequestsByAuthor("anyone")
+	if err != nil || len(prs) != 0 {
+		t.Errorf("ListPullRequestsByAuthor default: prs=%d, err=%v", len(prs), err)
+	}
+
+	_, err = s.DeletePullRequest("o/r", 1)
+	if err != nil {
+		t.Errorf("DeletePullRequest default: err=%v", err)
+	}
+}
+
+func TestStubReviewQueueStore_DefaultsSucceed(t *testing.T) {
+	s := NewStubReviewQueueStore()
+
+	prs, err := s.ListPullRequestsNotByAuthor("anyone")
+	if err != nil || len(prs) != 0 {
+		t.Errorf("ListPullRequestsNotByAuthor default: prs=%d, err=%v", len(prs), err)
+	}
+
+	_, err = s.DeletePullRequest("o/r", 1)
+	if err != nil {
+		t.Errorf("DeletePullRequest default: err=%v", err)
+	}
+}

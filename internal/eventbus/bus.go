@@ -26,6 +26,10 @@ const (
 
 	// SSORequired fires when a GitHub API 403 response includes an X-GitHub-SSO header.
 	SSORequired EventType = "SSO_REQUIRED"
+
+	// PRRemoved fires when a previously-tracked PR is no longer returned by the API
+	// (e.g. merged or closed). Before contains the deleted PullRequest; After is nil.
+	PRRemoved EventType = "PR_REMOVED"
 )
 
 // Event carries the type of change plus before/after snapshots of the

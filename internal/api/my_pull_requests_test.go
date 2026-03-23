@@ -690,3 +690,133 @@ func TestMyPullRequestsFetcher_Fetch_DraftPR(t *testing.T) {
 		t.Error("Draft should be true")
 	}
 }
+
+// ── Stale PR cleanup ─────────────────────────────────────────────────────────
+
+func TestMyPullRequestsFetcher_Fetch_CleansUpStalePRs(t *testing.T) {
+	store := NewStubPRStore()
+	pub := &StubPublisher{}
+
+	// API returns PR #42 only.
+	client := singlePageClient([]prSearchNode{basePRNode()})
+
+	// DB has PR #42 and stale PR #99 authored by alice.
+	stalePR := persistence.PullRequest{
+		ID: "PR_stale", Repo: "owner/repo", Number: 99, Title: "stale",
+		Author: "alice", Status: "open", CIState: "none",
+	}
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{
+			{ID: "PR_abc", Repo: "owner/repo", Number: 42, Author: "alice"},
+			stalePR,
+		}, nil
+	}
+	store.DeletePullRequestFunc = func(repo string, number int) (persistence.PullRequest, error) {
+		return stalePR, nil
+	}
+
+	f := NewMyPullRequestsFetcher(client, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	// Should have deleted only the stale PR.
+	if len(store.DeletedPRKeys) != 1 {
+		t.Fatalf("expected 1 deletion, got %d", len(store.DeletedPRKeys))
+	}
+	if store.DeletedPRKeys[0].Number != 99 {
+		t.Errorf("deleted PR number = %d, want 99", store.DeletedPRKeys[0].Number)
+	}
+
+	// Should have emitted PRRemoved event.
+	var foundRemoved bool
+	for _, e := range pub.Events {
+		if e.Type == eventbus.PRRemoved {
+			foundRemoved = true
+			if pr, ok := e.Before.(persistence.PullRequest); !ok || pr.Number != 99 {
+				t.Errorf("PRRemoved Before = %v, want PR #99", e.Before)
+			}
+			if e.After != nil {
+				t.Errorf("PRRemoved After = %v, want nil", e.After)
+			}
+		}
+	}
+	if !foundRemoved {
+		t.Error("expected PRRemoved event")
+	}
+}
+
+func TestMyPullRequestsFetcher_Fetch_NoCleanupOnAPIError(t *testing.T) {
+	store := NewStubPRStore()
+	pub := &StubPublisher{}
+
+	client := &StubGraphQLClient{
+		QueryFunc: func(_ context.Context, _ interface{}, _ map[string]interface{}) error {
+			return errors.New("api error")
+		},
+	}
+
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{
+			{ID: "PR_stale", Repo: "owner/repo", Number: 99, Author: "alice"},
+		}, nil
+	}
+
+	f := NewMyPullRequestsFetcher(client, store, pub, "alice")
+	_ = f.Fetch(context.Background()) // expected to fail
+
+	// Should NOT have deleted anything because API call failed.
+	if len(store.DeletedPRKeys) != 0 {
+		t.Errorf("expected 0 deletions on API error, got %d", len(store.DeletedPRKeys))
+	}
+}
+
+func TestMyPullRequestsFetcher_Fetch_CleanupListError(t *testing.T) {
+	store := NewStubPRStore()
+	pub := &StubPublisher{}
+
+	client := singlePageClient([]prSearchNode{basePRNode()})
+
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return nil, errors.New("list error")
+	}
+
+	f := NewMyPullRequestsFetcher(client, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	// List error → no deletions, no panic.
+	if len(store.DeletedPRKeys) != 0 {
+		t.Errorf("expected 0 deletions on list error, got %d", len(store.DeletedPRKeys))
+	}
+}
+
+func TestMyPullRequestsFetcher_Fetch_CleanupDeleteError(t *testing.T) {
+	store := NewStubPRStore()
+	pub := &StubPublisher{}
+
+	client := singlePageClient([]prSearchNode{basePRNode()})
+
+	store.ListPullRequestsByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{
+			{ID: "PR_abc", Repo: "owner/repo", Number: 42, Author: "alice"},
+			{ID: "PR_stale", Repo: "owner/repo", Number: 99, Author: "alice"},
+		}, nil
+	}
+	store.DeletePullRequestFunc = func(repo string, number int) (persistence.PullRequest, error) {
+		return persistence.PullRequest{}, errors.New("delete error")
+	}
+
+	f := NewMyPullRequestsFetcher(client, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	// Delete error → no event emitted, but fetch still succeeds.
+	for _, e := range pub.Events {
+		if e.Type == eventbus.PRRemoved {
+			t.Error("expected no PRRemoved event on delete error")
+		}
+	}
+}

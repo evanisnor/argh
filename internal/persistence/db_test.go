@@ -3,6 +3,7 @@ package persistence
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -1339,5 +1340,371 @@ func TestScanLogins_ScanError(t *testing.T) {
 	_, err = scanLogins(rows)
 	if err == nil {
 		t.Error("expected scan error from two-column row into one variable")
+	}
+}
+
+// ── ListPullRequestsByAuthor / ListPullRequestsNotByAuthor ────────────────────
+
+func TestListPullRequestsByAuthor(t *testing.T) {
+	db := openTestDB(t)
+
+	base := PullRequest{
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+	}
+	alicePR := base
+	alicePR.ID = "pr-1"
+	alicePR.Repo = "owner/repo"
+	alicePR.Number = 1
+	alicePR.Title = "Alice PR"
+	alicePR.URL = "https://github.com/owner/repo/pull/1"
+	alicePR.GlobalID = "g1"
+
+	bobPR := base
+	bobPR.ID = "pr-2"
+	bobPR.Repo = "owner/repo"
+	bobPR.Number = 2
+	bobPR.Title = "Bob PR"
+	bobPR.Author = "bob"
+	bobPR.URL = "https://github.com/owner/repo/pull/2"
+	bobPR.GlobalID = "g2"
+
+	for _, pr := range []PullRequest{alicePR, bobPR} {
+		if err := db.UpsertPullRequest(pr); err != nil {
+			t.Fatalf("UpsertPullRequest: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		author string
+		want   int
+	}{
+		{"alice has 1 PR", "alice", 1},
+		{"bob has 1 PR", "bob", 1},
+		{"charlie has 0 PRs", "charlie", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := db.ListPullRequestsByAuthor(tt.author)
+			if err != nil {
+				t.Fatalf("ListPullRequestsByAuthor(%q): %v", tt.author, err)
+			}
+			if len(got) != tt.want {
+				t.Errorf("got %d PRs, want %d", len(got), tt.want)
+			}
+		})
+	}
+}
+
+func TestListPullRequestsByAuthor_QueryError(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, err := db.ListPullRequestsByAuthor("alice")
+	if err == nil {
+		t.Error("expected error from ListPullRequestsByAuthor on closed DB")
+	}
+}
+
+func TestListPullRequestsNotByAuthor(t *testing.T) {
+	db := openTestDB(t)
+
+	base := PullRequest{
+		Status: "open", CIState: "none",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+	}
+
+	for i, author := range []string{"alice", "alice", "bob"} {
+		pr := base
+		pr.ID = fmt.Sprintf("pr-%d", i+1)
+		pr.Repo = "owner/repo"
+		pr.Number = i + 1
+		pr.Title = fmt.Sprintf("PR %d", i+1)
+		pr.Author = author
+		pr.URL = fmt.Sprintf("https://github.com/owner/repo/pull/%d", i+1)
+		pr.GlobalID = fmt.Sprintf("g%d", i+1)
+		if err := db.UpsertPullRequest(pr); err != nil {
+			t.Fatalf("UpsertPullRequest: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		author string
+		want   int
+	}{
+		{"not alice = bob's 1 PR", "alice", 1},
+		{"not bob = alice's 2 PRs", "bob", 2},
+		{"not charlie = all 3 PRs", "charlie", 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := db.ListPullRequestsNotByAuthor(tt.author)
+			if err != nil {
+				t.Fatalf("ListPullRequestsNotByAuthor(%q): %v", tt.author, err)
+			}
+			if len(got) != tt.want {
+				t.Errorf("got %d PRs, want %d", len(got), tt.want)
+			}
+		})
+	}
+}
+
+func TestListPullRequestsNotByAuthor_QueryError(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, err := db.ListPullRequestsNotByAuthor("alice")
+	if err == nil {
+		t.Error("expected error from ListPullRequestsNotByAuthor on closed DB")
+	}
+}
+
+// ── DeletePullRequest ──────────────────────────────────────────────────────
+
+func TestDeletePullRequest(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-del", Repo: "owner/repo", Number: 99, Title: "Delete Me",
+		Status: "open", CIState: "passing", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+		URL: "https://github.com/owner/repo/pull/99", GlobalID: "g-del",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+	// Insert related rows.
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-del", Login: "bob", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+	if err := db.UpsertCheckRun(CheckRun{PRID: "pr-del", Name: "ci", State: "COMPLETED", Conclusion: "SUCCESS", URL: ""}); err != nil {
+		t.Fatalf("UpsertCheckRun: %v", err)
+	}
+	if err := db.UpsertReviewThread(ReviewThread{PRID: "pr-del", ID: "t1", Body: "b", Path: "f.go", Line: 1}); err != nil {
+		t.Fatalf("UpsertReviewThread: %v", err)
+	}
+	if err := db.InsertTimelineEvent(TimelineEvent{PRID: "pr-del", EventType: "commit", Actor: "alice", CreatedAt: makeTime("2024-01-01T00:00:00Z"), PayloadJSON: "{}"}); err != nil {
+		t.Fatalf("InsertTimelineEvent: %v", err)
+	}
+	if err := db.UpsertSessionID(pr.URL, "a"); err != nil {
+		t.Fatalf("UpsertSessionID: %v", err)
+	}
+
+	// Delete the PR.
+	deleted, err := db.DeletePullRequest("owner/repo", 99)
+	if err != nil {
+		t.Fatalf("DeletePullRequest: %v", err)
+	}
+	if deleted.ID != "pr-del" {
+		t.Errorf("deleted PR ID = %q, want %q", deleted.ID, "pr-del")
+	}
+
+	// Verify the PR is gone.
+	_, err = db.GetPullRequest("owner/repo", 99)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expected sql.ErrNoRows after delete, got %v", err)
+	}
+
+	// Verify related rows are gone.
+	reviewers, _ := db.ListReviewers("pr-del")
+	if len(reviewers) != 0 {
+		t.Errorf("expected 0 reviewers after delete, got %d", len(reviewers))
+	}
+	checkRuns, _ := db.ListCheckRuns("pr-del")
+	if len(checkRuns) != 0 {
+		t.Errorf("expected 0 check runs after delete, got %d", len(checkRuns))
+	}
+	threads, _ := db.ListReviewThreads("pr-del")
+	if len(threads) != 0 {
+		t.Errorf("expected 0 review threads after delete, got %d", len(threads))
+	}
+	events, _ := db.ListTimelineEvents("pr-del")
+	if len(events) != 0 {
+		t.Errorf("expected 0 timeline events after delete, got %d", len(events))
+	}
+	_, err = db.GetSessionID(pr.URL)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expected session_id to be deleted, got err=%v", err)
+	}
+}
+
+func TestDeletePullRequest_NotFound(t *testing.T) {
+	db := openTestDB(t)
+	_, err := db.DeletePullRequest("nonexistent/repo", 999)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+func TestDeletePullRequest_RelatedRowDeleteError(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-err", Repo: "owner/repo", Number: 77, Title: "err test",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+		URL: "https://github.com/owner/repo/pull/77", GlobalID: "g-err",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+
+	// Create a trigger that blocks DELETE on reviewers to force the error path.
+	if _, err := db.db.Exec(`CREATE TRIGGER block_reviewer_del BEFORE DELETE ON reviewers BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	// Insert a reviewer so the DELETE actually fires the trigger.
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-err", Login: "bob", State: "PENDING"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+
+	_, err := db.DeletePullRequest("owner/repo", 77)
+	if err == nil {
+		t.Error("expected error from blocked DELETE on reviewers")
+	}
+}
+
+func TestDeletePullRequest_SessionIDDeleteError(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-sid", Repo: "owner/repo", Number: 78, Title: "sid err",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+		URL: "https://github.com/owner/repo/pull/78", GlobalID: "g-sid",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+	if err := db.UpsertSessionID(pr.URL, "a"); err != nil {
+		t.Fatalf("UpsertSessionID: %v", err)
+	}
+
+	// Block DELETE on session_ids.
+	if _, err := db.db.Exec(`CREATE TRIGGER block_sid_del BEFORE DELETE ON session_ids BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	_, err := db.DeletePullRequest("owner/repo", 78)
+	if err == nil {
+		t.Error("expected error from blocked DELETE on session_ids")
+	}
+}
+
+func TestDeletePullRequest_PRDeleteError(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-pdel", Repo: "owner/repo", Number: 79, Title: "pr del err",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+		URL: "https://github.com/owner/repo/pull/79", GlobalID: "g-pdel",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+
+	// Block DELETE on pull_requests itself.
+	if _, err := db.db.Exec(`CREATE TRIGGER block_pr_del BEFORE DELETE ON pull_requests BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	_, err := db.DeletePullRequest("owner/repo", 79)
+	if err == nil {
+		t.Error("expected error from blocked DELETE on pull_requests")
+	}
+}
+
+func TestDeletePullRequest_BeginError(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-begin", Repo: "owner/repo", Number: 80, Title: "begin err",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+		URL: "https://github.com/owner/repo/pull/80", GlobalID: "g-begin",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+
+	db.beginTx = func() (*sql.Tx, error) { return nil, errors.New("begin failed") }
+
+	_, err := db.DeletePullRequest("owner/repo", 80)
+	if err == nil {
+		t.Error("expected error from DeletePullRequest when Begin fails")
+	}
+}
+
+func TestDeletePullRequest_CommitError(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-commit", Repo: "owner/repo", Number: 81, Title: "commit err",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+		URL: "https://github.com/owner/repo/pull/81", GlobalID: "g-commit",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+
+	db.commitTx = func(_ *sql.Tx) error { return errors.New("commit failed") }
+
+	_, err := db.DeletePullRequest("owner/repo", 81)
+	if err == nil {
+		t.Error("expected error from DeletePullRequest when Commit fails")
+	}
+}
+
+func TestDeletePullRequest_LeavesOtherPRs(t *testing.T) {
+	db := openTestDB(t)
+
+	base := PullRequest{
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"),
+	}
+	pr1 := base
+	pr1.ID = "pr-1"
+	pr1.Repo = "owner/repo"
+	pr1.Number = 1
+	pr1.Title = "Keep"
+	pr1.URL = "https://github.com/owner/repo/pull/1"
+	pr1.GlobalID = "g1"
+
+	pr2 := base
+	pr2.ID = "pr-2"
+	pr2.Repo = "owner/repo"
+	pr2.Number = 2
+	pr2.Title = "Delete"
+	pr2.URL = "https://github.com/owner/repo/pull/2"
+	pr2.GlobalID = "g2"
+
+	for _, pr := range []PullRequest{pr1, pr2} {
+		if err := db.UpsertPullRequest(pr); err != nil {
+			t.Fatalf("UpsertPullRequest: %v", err)
+		}
+	}
+
+	if _, err := db.DeletePullRequest("owner/repo", 2); err != nil {
+		t.Fatalf("DeletePullRequest: %v", err)
+	}
+
+	// PR 1 should still exist.
+	got, err := db.GetPullRequest("owner/repo", 1)
+	if err != nil {
+		t.Fatalf("GetPullRequest: %v", err)
+	}
+	if got.Title != "Keep" {
+		t.Errorf("remaining PR title = %q, want %q", got.Title, "Keep")
 	}
 }

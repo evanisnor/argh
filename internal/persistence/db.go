@@ -50,7 +50,9 @@ func (OSFilesystem) UserDataDir() (string, error) {
 
 // DB wraps a *sql.DB with typed read/write methods for argh's schema.
 type DB struct {
-	db *sql.DB
+	db       *sql.DB
+	beginTx  func() (*sql.Tx, error)        // defaults to db.Begin; overridable in tests
+	commitTx func(tx *sql.Tx) error          // defaults to tx.Commit; overridable in tests
 }
 
 // Open opens (or creates) the argh SQLite database at
@@ -79,6 +81,8 @@ func open(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("opening sqlite database: %w", err)
 	}
 	d := &DB{db: db}
+	d.beginTx = db.Begin
+	d.commitTx = func(tx *sql.Tx) error { return tx.Commit() }
 	if err := d.initialize(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -294,6 +298,78 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		prs = append(prs, pr)
 	}
 	return prs, rows.Err()
+}
+
+// ListPullRequestsByAuthor returns all pull requests authored by the given user.
+func (d *DB) ListPullRequestsByAuthor(author string) ([]PullRequest, error) {
+	rows, err := d.db.Query(`
+		SELECT id, repo, number, title, status, ci_state, draft, author,
+		       created_at, updated_at, last_activity_at, url, global_id
+		FROM pull_requests
+		WHERE author = ?
+	`, author)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPRs(rows)
+}
+
+// ListPullRequestsNotByAuthor returns all pull requests NOT authored by the given user.
+func (d *DB) ListPullRequestsNotByAuthor(author string) ([]PullRequest, error) {
+	rows, err := d.db.Query(`
+		SELECT id, repo, number, title, status, ci_state, draft, author,
+		       created_at, updated_at, last_activity_at, url, global_id
+		FROM pull_requests
+		WHERE author != ?
+	`, author)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPRs(rows)
+}
+
+// DeletePullRequest removes a pull request and all its associated rows
+// (reviewers, check_runs, review_threads, timeline_events, session_ids).
+// Returns the deleted PullRequest for event emission. Returns sql.ErrNoRows
+// if the PR does not exist.
+func (d *DB) DeletePullRequest(repo string, number int) (PullRequest, error) {
+	pr, err := d.GetPullRequest(repo, number)
+	if err != nil {
+		return PullRequest{}, err
+	}
+
+	tx, err := d.beginTx()
+	if err != nil {
+		return PullRequest{}, fmt.Errorf("beginning delete transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, stmt := range []string{
+		`DELETE FROM reviewers WHERE pr_id = ?`,
+		`DELETE FROM check_runs WHERE pr_id = ?`,
+		`DELETE FROM review_threads WHERE pr_id = ?`,
+		`DELETE FROM timeline_events WHERE pr_id = ?`,
+	} {
+		if _, err := tx.Exec(stmt, pr.ID); err != nil {
+			return PullRequest{}, fmt.Errorf("deleting related rows: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM session_ids WHERE pr_url = ?`, pr.URL); err != nil {
+		return PullRequest{}, fmt.Errorf("deleting session_id: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM pull_requests WHERE repo = ? AND number = ?`, repo, number); err != nil {
+		return PullRequest{}, fmt.Errorf("deleting pull request: %w", err)
+	}
+
+	if err := d.commitTx(tx); err != nil {
+		return PullRequest{}, fmt.Errorf("committing delete transaction: %w", err)
+	}
+
+	return pr, nil
 }
 
 // ── Reviewers ────────────────────────────────────────────────────────────────

@@ -39,24 +39,35 @@ func (s *StubGraphQLClient) Query(ctx context.Context, q interface{}, variables 
 // Callers configure behaviour via function fields; captured writes are
 // recorded in UpsertedPRs, UpsertedCheckRuns, and UpsertedReviewers.
 type StubPRStore struct {
-	GetPullRequestFunc    func(repo string, number int) (persistence.PullRequest, error)
-	UpsertPullRequestFunc func(pr persistence.PullRequest) error
-	UpsertReviewerFunc    func(r persistence.Reviewer) error
-	UpsertCheckRunFunc    func(cr persistence.CheckRun) error
+	GetPullRequestFunc          func(repo string, number int) (persistence.PullRequest, error)
+	UpsertPullRequestFunc       func(pr persistence.PullRequest) error
+	UpsertReviewerFunc          func(r persistence.Reviewer) error
+	UpsertCheckRunFunc          func(cr persistence.CheckRun) error
+	ListPullRequestsByAuthorFunc func(author string) ([]persistence.PullRequest, error)
+	DeletePullRequestFunc       func(repo string, number int) (persistence.PullRequest, error)
 
 	UpsertedPRs       []persistence.PullRequest
 	UpsertedCheckRuns []persistence.CheckRun
 	UpsertedReviewers []persistence.Reviewer
+	DeletedPRKeys     []PRKey
+}
+
+// PRKey identifies a PR by repo and number for tracking deletions.
+type PRKey struct {
+	Repo   string
+	Number int
 }
 
 // NewStubPRStore returns a StubPRStore whose defaults succeed and report every
 // PR as new (GetPullRequest returns sql.ErrNoRows).
 func NewStubPRStore() *StubPRStore {
 	return &StubPRStore{
-		GetPullRequestFunc:    func(repo string, number int) (persistence.PullRequest, error) { return persistence.PullRequest{}, sql.ErrNoRows },
-		UpsertPullRequestFunc: func(pr persistence.PullRequest) error { return nil },
-		UpsertReviewerFunc:    func(r persistence.Reviewer) error { return nil },
-		UpsertCheckRunFunc:    func(cr persistence.CheckRun) error { return nil },
+		GetPullRequestFunc:          func(repo string, number int) (persistence.PullRequest, error) { return persistence.PullRequest{}, sql.ErrNoRows },
+		UpsertPullRequestFunc:       func(pr persistence.PullRequest) error { return nil },
+		UpsertReviewerFunc:          func(r persistence.Reviewer) error { return nil },
+		UpsertCheckRunFunc:          func(cr persistence.CheckRun) error { return nil },
+		ListPullRequestsByAuthorFunc: func(author string) ([]persistence.PullRequest, error) { return nil, nil },
+		DeletePullRequestFunc:       func(repo string, number int) (persistence.PullRequest, error) { return persistence.PullRequest{}, nil },
 	}
 }
 
@@ -79,6 +90,15 @@ func (s *StubPRStore) UpsertReviewer(r persistence.Reviewer) error {
 	return s.UpsertReviewerFunc(r)
 }
 
+func (s *StubPRStore) ListPullRequestsByAuthor(author string) ([]persistence.PullRequest, error) {
+	return s.ListPullRequestsByAuthorFunc(author)
+}
+
+func (s *StubPRStore) DeletePullRequest(repo string, number int) (persistence.PullRequest, error) {
+	s.DeletedPRKeys = append(s.DeletedPRKeys, PRKey{Repo: repo, Number: number})
+	return s.DeletePullRequestFunc(repo, number)
+}
+
 // StubPublisher is a test double for Publisher that records all published events.
 type StubPublisher struct {
 	Events []eventbus.Event
@@ -90,10 +110,12 @@ func (s *StubPublisher) Publish(e eventbus.Event) {
 }
 
 // StubReviewQueueStore is a test double for ReviewQueueStore.
-// It embeds StubPRStore for the shared PR methods and adds InsertTimelineEvent.
+// It embeds StubPRStore for the shared PR methods and adds InsertTimelineEvent
+// and the list/delete methods specific to the review queue.
 type StubReviewQueueStore struct {
 	*StubPRStore
-	InsertTimelineEventFunc func(te persistence.TimelineEvent) error
+	InsertTimelineEventFunc         func(te persistence.TimelineEvent) error
+	ListPullRequestsNotByAuthorFunc func(author string) ([]persistence.PullRequest, error)
 
 	InsertedTimelineEvents []persistence.TimelineEvent
 }
@@ -102,14 +124,24 @@ type StubReviewQueueStore struct {
 // and report every PR as new (GetPullRequest returns sql.ErrNoRows).
 func NewStubReviewQueueStore() *StubReviewQueueStore {
 	return &StubReviewQueueStore{
-		StubPRStore:             NewStubPRStore(),
-		InsertTimelineEventFunc: func(te persistence.TimelineEvent) error { return nil },
+		StubPRStore:                     NewStubPRStore(),
+		InsertTimelineEventFunc:         func(te persistence.TimelineEvent) error { return nil },
+		ListPullRequestsNotByAuthorFunc: func(author string) ([]persistence.PullRequest, error) { return nil, nil },
 	}
 }
 
 func (s *StubReviewQueueStore) InsertTimelineEvent(te persistence.TimelineEvent) error {
 	s.InsertedTimelineEvents = append(s.InsertedTimelineEvents, te)
 	return s.InsertTimelineEventFunc(te)
+}
+
+func (s *StubReviewQueueStore) ListPullRequestsNotByAuthor(author string) ([]persistence.PullRequest, error) {
+	return s.ListPullRequestsNotByAuthorFunc(author)
+}
+
+func (s *StubReviewQueueStore) DeletePullRequest(repo string, number int) (persistence.PullRequest, error) {
+	s.DeletedPRKeys = append(s.DeletedPRKeys, PRKey{Repo: repo, Number: number})
+	return s.DeletePullRequestFunc(repo, number)
 }
 
 // ── Mutation stubs ─────────────────────────────────────────────────────────────

@@ -569,3 +569,118 @@ func TestExtractRQCommits_ExtractsLoginAndDate(t *testing.T) {
 		t.Errorf("CommittedDate = %v, want %v", result[0].CommittedDate.Time, commitTime)
 	}
 }
+
+// ── Stale PR cleanup ─────────────────────────────────────────────────────────
+
+func TestReviewQueueFetcher_Fetch_CleansUpStalePRs(t *testing.T) {
+	store := NewStubReviewQueueStore()
+	pub := &StubPublisher{}
+
+	// API returns PR #10 only.
+	client := singlePageRQClient([]rqNode{baseRQNode()})
+
+	// DB has PR #10 (by bob) and stale PR #99 (by carol).
+	stalePR := persistence.PullRequest{
+		ID: "PR_stale", Repo: "owner/repo", Number: 99, Title: "stale",
+		Author: "carol", Status: "open", CIState: "none",
+	}
+	store.ListPullRequestsNotByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{
+			{ID: "PR_rq1", Repo: "owner/repo", Number: 10, Author: "bob"},
+			stalePR,
+		}, nil
+	}
+	store.DeletePullRequestFunc = func(repo string, number int) (persistence.PullRequest, error) {
+		return stalePR, nil
+	}
+
+	f := NewReviewQueueFetcher(client, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	if len(store.DeletedPRKeys) != 1 {
+		t.Fatalf("expected 1 deletion, got %d", len(store.DeletedPRKeys))
+	}
+	if store.DeletedPRKeys[0].Number != 99 {
+		t.Errorf("deleted PR number = %d, want 99", store.DeletedPRKeys[0].Number)
+	}
+
+	var foundRemoved bool
+	for _, e := range pub.Events {
+		if e.Type == eventbus.PRRemoved {
+			foundRemoved = true
+		}
+	}
+	if !foundRemoved {
+		t.Error("expected PRRemoved event")
+	}
+}
+
+func TestReviewQueueFetcher_Fetch_NoCleanupOnAPIError(t *testing.T) {
+	store := NewStubReviewQueueStore()
+	pub := &StubPublisher{}
+
+	client := &StubGraphQLClient{
+		QueryFunc: func(_ context.Context, _ interface{}, _ map[string]interface{}) error {
+			return errors.New("api error")
+		},
+	}
+
+	store.ListPullRequestsNotByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{{ID: "PR_stale", Repo: "owner/repo", Number: 99}}, nil
+	}
+
+	f := NewReviewQueueFetcher(client, store, pub, "alice")
+	_ = f.Fetch(context.Background())
+
+	if len(store.DeletedPRKeys) != 0 {
+		t.Errorf("expected 0 deletions on API error, got %d", len(store.DeletedPRKeys))
+	}
+}
+
+func TestReviewQueueFetcher_Fetch_CleanupListError(t *testing.T) {
+	store := NewStubReviewQueueStore()
+	pub := &StubPublisher{}
+
+	client := singlePageRQClient([]rqNode{baseRQNode()})
+	store.ListPullRequestsNotByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return nil, errors.New("list error")
+	}
+
+	f := NewReviewQueueFetcher(client, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	if len(store.DeletedPRKeys) != 0 {
+		t.Errorf("expected 0 deletions on list error, got %d", len(store.DeletedPRKeys))
+	}
+}
+
+func TestReviewQueueFetcher_Fetch_CleanupDeleteError(t *testing.T) {
+	store := NewStubReviewQueueStore()
+	pub := &StubPublisher{}
+
+	client := singlePageRQClient([]rqNode{baseRQNode()})
+	store.ListPullRequestsNotByAuthorFunc = func(author string) ([]persistence.PullRequest, error) {
+		return []persistence.PullRequest{
+			{ID: "PR_rq1", Repo: "owner/repo", Number: 10, Author: "bob"},
+			{ID: "PR_stale", Repo: "owner/repo", Number: 99, Author: "carol"},
+		}, nil
+	}
+	store.DeletePullRequestFunc = func(repo string, number int) (persistence.PullRequest, error) {
+		return persistence.PullRequest{}, errors.New("delete error")
+	}
+
+	f := NewReviewQueueFetcher(client, store, pub, "alice")
+	if err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	for _, e := range pub.Events {
+		if e.Type == eventbus.PRRemoved {
+			t.Error("expected no PRRemoved event on delete error")
+		}
+	}
+}

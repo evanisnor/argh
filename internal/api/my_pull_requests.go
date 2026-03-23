@@ -20,6 +20,8 @@ type PRStore interface {
 	UpsertPullRequest(pr persistence.PullRequest) error
 	UpsertReviewer(r persistence.Reviewer) error
 	UpsertCheckRun(cr persistence.CheckRun) error
+	ListPullRequestsByAuthor(author string) ([]persistence.PullRequest, error)
+	DeletePullRequest(repo string, number int) (persistence.PullRequest, error)
 }
 
 // Publisher publishes events to the event bus.
@@ -157,13 +159,21 @@ type ReviewData struct {
 	State string
 }
 
+// prKey identifies a PR by repo and number for stale-PR tracking.
+type prKey struct {
+	Repo   string
+	Number int
+}
+
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 
 // Fetch queries GitHub for all open PRs authored by the user and persists changes.
-// Events are emitted for new or changed PRs.
+// Events are emitted for new or changed PRs. PRs that are no longer returned by
+// the API (merged/closed) are deleted from the database and a PRRemoved event is emitted.
 func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 	cursor := (*githubv4.String)(nil)
 	searchQuery := fmt.Sprintf("is:pr is:open author:%s", f.login)
+	seen := make(map[prKey]bool)
 
 	for {
 		var q myPRsQuery
@@ -206,6 +216,7 @@ func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 			if err := f.persistPR(prRow, runs, reviews); err != nil {
 				return err
 			}
+			seen[prKey{Repo: repo, Number: int(p.Number)}] = true
 		}
 
 		if !bool(q.Search.PageInfo.HasNextPage) {
@@ -215,7 +226,29 @@ func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 		cursor = &endCursor
 	}
 
+	f.cleanupStalePRs(seen)
 	return nil
+}
+
+// cleanupStalePRs deletes PRs from the DB that were not seen in the latest fetch.
+func (f *MyPullRequestsFetcher) cleanupStalePRs(seen map[prKey]bool) {
+	owned, err := f.store.ListPullRequestsByAuthor(f.login)
+	if err != nil {
+		return
+	}
+	for _, pr := range owned {
+		if !seen[prKey{Repo: pr.Repo, Number: pr.Number}] {
+			deleted, err := f.store.DeletePullRequest(pr.Repo, pr.Number)
+			if err != nil {
+				continue
+			}
+			f.bus.Publish(eventbus.Event{
+				Type:   eventbus.PRRemoved,
+				Before: deleted,
+				After:  nil,
+			})
+		}
+	}
 }
 
 func extractCheckRuns(suites prSearchCheckSuiteConnection) []CheckRunData {
