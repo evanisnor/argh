@@ -114,6 +114,7 @@ type prSearchPR struct {
 	ID              githubv4.String
 	Number          githubv4.Int
 	Title           githubv4.String
+	Body            githubv4.String
 	State           githubv4.String
 	IsDraft         githubv4.Boolean
 	URL             githubv4.URI
@@ -202,6 +203,7 @@ func (f *MyPullRequestsFetcher) Fetch(ctx context.Context) error {
 				Repo:           repo,
 				Number:         int(p.Number),
 				Title:          string(p.Title),
+				Body:           string(p.Body),
 				Status:         DerivePRStatus(p.MergeQueueEntry != nil, bool(p.IsDraft), reviews),
 				CIState:        DeriveCIState(runs),
 				Draft:          bool(p.IsDraft),

@@ -52,6 +52,7 @@ func basePRNode() prSearchNode {
 			ID:     githubv4.String("PR_abc"),
 			Number: githubv4.Int(42),
 			Title:  githubv4.String("fix: a bug"),
+			Body:   githubv4.String("This PR fixes a bug"),
 			State:  githubv4.String("OPEN"),
 			Author: prSearchPRAuthor{Login: githubv4.String("alice")},
 			Repository: prSearchPRRepository{
@@ -87,6 +88,9 @@ func TestMyPullRequestsFetcher_Fetch_NewPR_EmitsPRUpdated(t *testing.T) {
 	}
 	if pr.Title != "fix: a bug" {
 		t.Errorf("Title = %q, want %q", pr.Title, "fix: a bug")
+	}
+	if pr.Body != "This PR fixes a bug" {
+		t.Errorf("Body = %q, want %q", pr.Body, "This PR fixes a bug")
 	}
 	if pr.Author != "alice" {
 		t.Errorf("Author = %q, want %q", pr.Author, "alice")
@@ -208,7 +212,8 @@ func TestMyPullRequestsFetcher_Fetch_ExistingPR_NoChanges_NoEvents(t *testing.T)
 	ts := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	existing := persistence.PullRequest{
 		ID: "PR_abc", Repo: "owner/repo", Number: 42,
-		Title: "fix: a bug", Status: "open", CIState: "none",
+		Title: "fix: a bug", Body: "This PR fixes a bug",
+		Status: "open", CIState: "none",
 		Author: "alice",
 		CreatedAt:      time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:      ts,

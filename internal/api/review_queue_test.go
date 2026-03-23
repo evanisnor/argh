@@ -32,6 +32,7 @@ func baseRQNode() rqNode {
 			ID:     githubv4.String("PR_rq1"),
 			Number: githubv4.Int(10),
 			Title:  githubv4.String("feat: review me"),
+			Body:   githubv4.String("Please review this feature"),
 			State:  githubv4.String("OPEN"),
 			Author: prSearchPRAuthor{Login: githubv4.String("bob")},
 			Repository: prSearchPRRepository{
@@ -67,6 +68,9 @@ func TestReviewQueueFetcher_Fetch_NewPR_EmitsPRUpdated(t *testing.T) {
 	}
 	if pr.Title != "feat: review me" {
 		t.Errorf("Title = %q, want %q", pr.Title, "feat: review me")
+	}
+	if pr.Body != "Please review this feature" {
+		t.Errorf("Body = %q, want %q", pr.Body, "Please review this feature")
 	}
 	if pr.Author != "bob" {
 		t.Errorf("Author = %q, want %q", pr.Author, "bob")
@@ -147,7 +151,8 @@ func TestReviewQueueFetcher_Fetch_ExistingPR_NoChanges_NoEvents(t *testing.T) {
 	ts := time.Date(2024, 2, 2, 0, 0, 0, 0, time.UTC)
 	existing := persistence.PullRequest{
 		ID: "PR_rq1", Repo: "owner/repo", Number: 10,
-		Title: "feat: review me", Status: "open", CIState: "none",
+		Title: "feat: review me", Body: "Please review this feature",
+		Status: "open", CIState: "none",
 		Author:         "bob",
 		CreatedAt:      time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:      ts,
@@ -510,7 +515,8 @@ func TestReviewQueueFetcher_Fetch_NoDuplication(t *testing.T) {
 	ts := time.Date(2024, 2, 2, 0, 0, 0, 0, time.UTC)
 	existing := persistence.PullRequest{
 		ID: "PR_rq1", Repo: "owner/repo", Number: 10,
-		Title: "feat: review me", Status: "open", CIState: "none",
+		Title: "feat: review me", Body: "Please review this feature",
+		Status: "open", CIState: "none",
 		Author:         "bob",
 		CreatedAt:      time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:      ts,

@@ -1936,7 +1936,7 @@ tasks:
 
   - id: 119
     title: "Fetch PR body in GraphQL fetchers"
-    status: pending
+    status: done
     depends_on: [118]
     description: >
       Add Body githubv4.String to prSearchPR and rqPR structs. Set Body on
