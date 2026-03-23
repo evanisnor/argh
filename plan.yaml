@@ -1990,3 +1990,20 @@ tasks:
       Test metadata header renders all fields. Test Body renders through glamour.
       Test empty Body falls back to Title. Test draft PR shows yes. Table-driven
       for status/CI variants.
+
+  # ─── Phase 27: Detail Pane Scroll & Page Navigation ──────────────────────────
+
+  - id: 124
+    title: "Detail pane: scroll content with j/k/arrows, page PRs with PgUp/PgDn"
+    status: done
+    depends_on: [49]
+    description: >
+      When the detail modal is open, j/k/↑/↓ now forward to the detail pane
+      viewport for scrolling instead of dispatching MoveFocusMsg to the panel.
+      PgUp/PgDn page between PRs (the old j/k behavior). When detail is closed,
+      j/k behavior is unchanged. Help overlay updated with new key descriptions.
+    testing: >
+      Updated existing tests: j/k with detail open now assert tea.KeyMsg forwarded
+      to detail pane. New tests: PgDown/PgUp with detail open assert PRFocusedMsg;
+      PgDown with detail closed is no-op; PgDown on Watches and empty panel no-ops.
+      100% coverage maintained.

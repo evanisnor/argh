@@ -21,8 +21,9 @@ var helpSections = []helpSection{
 	{
 		title: "Keyboard Shortcuts",
 		rows: [][2]string{
-			{"j / ↓", "Move focus down within focused panel"},
-			{"k / ↑", "Move focus up"},
+			{"j / ↓", "Move focus down (scroll when detail open)"},
+			{"k / ↑", "Move focus up (scroll when detail open)"},
+			{"PgDn / PgUp", "Page between PRs when detail open"},
 			{"Tab", "Cycle between panels (My PRs → Review Queue → Watches)"},
 			{"Enter / p", "Toggle detail pane for focused PR"},
 			{"o", "Open focused PR in browser"},

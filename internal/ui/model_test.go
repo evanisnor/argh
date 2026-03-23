@@ -713,9 +713,9 @@ func TestKey_Enter_SendsPRFocusedMsgToDetailPane(t *testing.T) {
 	}
 }
 
-// TestKey_JK_WhenDetailOpen_RefreshesDetailPane verifies that cursor movement
-// while the detail modal is open sends an updated PRFocusedMsg to the detail pane.
-func TestKey_JK_WhenDetailOpen_RefreshesDetailPane(t *testing.T) {
+// TestKey_JK_WhenDetailOpen_ScrollsDetailPane verifies that j/k forward the
+// key event to the detail pane for viewport scrolling when the modal is open.
+func TestKey_JK_WhenDetailOpen_ScrollsDetailPane(t *testing.T) {
 	pr := &persistence.PullRequest{ID: "pr1", Title: "PR one"}
 	detail := newStub("detail", false)
 	m, _ := newTestModel(
@@ -730,24 +730,24 @@ func TestKey_JK_WhenDetailOpen_RefreshesDetailPane(t *testing.T) {
 	if !m.detailOpen {
 		t.Fatal("detail should be open")
 	}
-	// Clear the last message so we can verify the refresh sends a new one.
+	// Clear the last message so we can verify j forwards the key.
 	m.detailPane.(*stubSubModel).lastMsg = nil
 
-	// Press j — cursor moves, detail pane should get a new PRFocusedMsg.
+	// Press j — detail pane should receive the tea.KeyMsg (for viewport scroll).
 	m = applyMsg(m, keyRune('j'))
 
-	msg, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg)
+	keyMsg, ok := m.detailPane.(*stubSubModel).lastMsg.(tea.KeyMsg)
 	if !ok {
-		t.Fatalf("after j with detail open, detailPane should receive PRFocusedMsg, got %T",
+		t.Fatalf("after j with detail open, detailPane should receive tea.KeyMsg, got %T",
 			m.detailPane.(*stubSubModel).lastMsg)
 	}
-	if msg.PR.ID != "pr1" {
-		t.Errorf("PRFocusedMsg.PR.ID = %q, want %q", msg.PR.ID, "pr1")
+	if keyMsg.String() != "j" {
+		t.Errorf("forwarded key = %q, want %q", keyMsg.String(), "j")
 	}
 }
 
-// TestKey_KWhenDetailOpen_RefreshesDetailPane verifies k also triggers refresh.
-func TestKey_KWhenDetailOpen_RefreshesDetailPane(t *testing.T) {
+// TestKey_KWhenDetailOpen_ScrollsDetailPane verifies k forwards to detail pane.
+func TestKey_KWhenDetailOpen_ScrollsDetailPane(t *testing.T) {
 	pr := &persistence.PullRequest{ID: "pr1", Title: "PR one"}
 	detail := newStub("detail", false)
 	m, _ := newTestModel(
@@ -762,10 +762,13 @@ func TestKey_KWhenDetailOpen_RefreshesDetailPane(t *testing.T) {
 
 	m = applyMsg(m, keyRune('k'))
 
-	_, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg)
+	keyMsg, ok := m.detailPane.(*stubSubModel).lastMsg.(tea.KeyMsg)
 	if !ok {
-		t.Fatalf("after k with detail open, detailPane should receive PRFocusedMsg, got %T",
+		t.Fatalf("after k with detail open, detailPane should receive tea.KeyMsg, got %T",
 			m.detailPane.(*stubSubModel).lastMsg)
+	}
+	if keyMsg.String() != "k" {
+		t.Errorf("forwarded key = %q, want %q", keyMsg.String(), "k")
 	}
 }
 
@@ -789,8 +792,8 @@ func TestKey_JWhenDetailClosed_NoRefresh(t *testing.T) {
 }
 
 // TestKey_JWhenDetailOpen_WatchesFocused verifies that pressing j when the
-// Watches panel is focused and the detail is open does not panic or send
-// PRFocusedMsg (Watches panel has no PR selector).
+// Watches panel is focused and the detail is open forwards to the detail pane
+// for scrolling (regardless of focused panel).
 func TestKey_JWhenDetailOpen_WatchesFocused(t *testing.T) {
 	detail := newStub("detail", false)
 	m, _ := newTestModel(
@@ -806,14 +809,20 @@ func TestKey_JWhenDetailOpen_WatchesFocused(t *testing.T) {
 
 	m = applyMsg(m, keyRune('j'))
 
-	// No PRFocusedMsg should be sent (watches has no PR selector).
-	if _, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg); ok {
-		t.Error("j on Watches panel should not send PRFocusedMsg to detail pane")
+	// j should forward to detail pane for viewport scroll.
+	keyMsg, ok := m.detailPane.(*stubSubModel).lastMsg.(tea.KeyMsg)
+	if !ok {
+		t.Fatalf("j on Watches with detail open should forward tea.KeyMsg to detail pane, got %T",
+			m.detailPane.(*stubSubModel).lastMsg)
+	}
+	if keyMsg.String() != "j" {
+		t.Errorf("forwarded key = %q, want %q", keyMsg.String(), "j")
 	}
 }
 
 // TestKey_JWhenDetailOpen_EmptyPRPanel verifies that pressing j when the
-// detail is open but the panel has no PR rows does not send PRFocusedMsg.
+// detail is open but the panel has no PR rows still forwards to the detail
+// pane for viewport scrolling.
 func TestKey_JWhenDetailOpen_EmptyPRPanel(t *testing.T) {
 	detail := newStub("detail", false)
 	// selectorStub with nil PR — returns nil from SelectedPR().
@@ -825,13 +834,133 @@ func TestKey_JWhenDetailOpen_EmptyPRPanel(t *testing.T) {
 		detail,
 		newStub("cmdBar", false),
 	)
-	// Force detail open (unusual state, but exercises the nil-pr guard).
+	// Force detail open (unusual state, but exercises the scroll path).
 	m.detailOpen = true
 
 	m = applyMsg(m, keyRune('j'))
 
+	// j should forward to detail pane for viewport scroll.
+	keyMsg, ok := m.detailPane.(*stubSubModel).lastMsg.(tea.KeyMsg)
+	if !ok {
+		t.Fatalf("j with empty PR panel and detail open should forward tea.KeyMsg, got %T",
+			m.detailPane.(*stubSubModel).lastMsg)
+	}
+	if keyMsg.String() != "j" {
+		t.Errorf("forwarded key = %q, want %q", keyMsg.String(), "j")
+	}
+}
+
+// TestKey_PgDown_WhenDetailOpen_RefreshesDetailPane verifies that pgdown
+// dispatches MoveFocusMsg to the panel and sends PRFocusedMsg to the detail pane.
+func TestKey_PgDown_WhenDetailOpen_RefreshesDetailPane(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "PR one"}
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", pr),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.detailOpen {
+		t.Fatal("detail should be open")
+	}
+	m.detailPane.(*stubSubModel).lastMsg = nil
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyPgDown})
+
+	msg, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg)
+	if !ok {
+		t.Fatalf("after pgdown with detail open, detailPane should receive PRFocusedMsg, got %T",
+			m.detailPane.(*stubSubModel).lastMsg)
+	}
+	if msg.PR.ID != "pr1" {
+		t.Errorf("PRFocusedMsg.PR.ID = %q, want %q", msg.PR.ID, "pr1")
+	}
+}
+
+// TestKey_PgUp_WhenDetailOpen_RefreshesDetailPane verifies pgup pages to prev PR.
+func TestKey_PgUp_WhenDetailOpen_RefreshesDetailPane(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1", Title: "PR one"}
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", pr),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m.detailPane.(*stubSubModel).lastMsg = nil
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyPgUp})
+
+	_, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg)
+	if !ok {
+		t.Fatalf("after pgup with detail open, detailPane should receive PRFocusedMsg, got %T",
+			m.detailPane.(*stubSubModel).lastMsg)
+	}
+}
+
+// TestKey_PgDown_WhenDetailClosed_NoOp verifies pgdown does nothing when
+// the detail modal is closed.
+func TestKey_PgDown_WhenDetailClosed_NoOp(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1"}
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newSelectorStub("myPRs", pr),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	// detail is closed (default)
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyPgDown})
 	if _, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg); ok {
-		t.Error("j with nil SelectedPR should not send PRFocusedMsg to detail pane")
+		t.Error("pgdown with detail closed should not send PRFocusedMsg to detail pane")
+	}
+}
+
+// TestKey_PgDown_WhenDetailOpen_WatchesFocused verifies that pgdown on the
+// Watches panel (no PR selector) does not send PRFocusedMsg.
+func TestKey_PgDown_WhenDetailOpen_WatchesFocused(t *testing.T) {
+	detail := newStub("detail", false)
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", true),
+		detail,
+		newStub("cmdBar", false),
+	)
+	m.detailOpen = true
+	m.focused = PanelWatches
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyPgDown})
+
+	if _, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg); ok {
+		t.Error("pgdown on Watches panel should not send PRFocusedMsg to detail pane")
+	}
+}
+
+// TestKey_PgDown_WhenDetailOpen_EmptyPRPanel verifies that pgdown with nil
+// SelectedPR does not send PRFocusedMsg.
+func TestKey_PgDown_WhenDetailOpen_EmptyPRPanel(t *testing.T) {
+	detail := newStub("detail", false)
+	emptySelector := newSelectorStub("myPRs", nil)
+	m, _ := newTestModel(
+		emptySelector,
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		detail,
+		newStub("cmdBar", false),
+	)
+	m.detailOpen = true
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyPgDown})
+
+	if _, ok := m.detailPane.(*stubSubModel).lastMsg.(PRFocusedMsg); ok {
+		t.Error("pgdown with nil SelectedPR should not send PRFocusedMsg to detail pane")
 	}
 }
 

@@ -583,20 +583,40 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "j", "down":
+		if m.detailOpen {
+			var cmd tea.Cmd
+			m.detailPane, cmd = m.detailPane.Update(msg)
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
 		result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: true})
 		m = result.(Model)
-		if m.detailOpen {
-			m.refreshDetailForCursor()
-		}
 		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 
 	case "k", "up":
+		if m.detailOpen {
+			var cmd tea.Cmd
+			m.detailPane, cmd = m.detailPane.Update(msg)
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
 		result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: false})
 		m = result.(Model)
-		if m.detailOpen {
-			m.refreshDetailForCursor()
-		}
 		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+
+	case "pgdown":
+		if m.detailOpen {
+			result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: true})
+			m = result.(Model)
+			m.refreshDetailForCursor()
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
+
+	case "pgup":
+		if m.detailOpen {
+			result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: false})
+			m = result.(Model)
+			m.refreshDetailForCursor()
+			return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		}
 
 	case "/", ":":
 		slog.Debug("model.handleKey: activating command bar", "key", msg.String())
