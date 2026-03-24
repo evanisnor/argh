@@ -684,6 +684,22 @@ func TestReviewQueuePanel_RefreshErrors(t *testing.T) {
 	})
 }
 
+// TestReviewQueuePanel_RefreshMsg verifies that a RefreshMsg reloads data from the reader.
+func TestReviewQueuePanel_RefreshMsg(t *testing.T) {
+	reader := newStubPRReader()
+	panel := newReviewQueuePanelWithClock(reader, "", stubClock{now: t2})
+	if panel.HasContent() {
+		t.Fatal("expected no content initially")
+	}
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", Repo: "repo", Number: 1, Title: "PR", Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+	}
+	panel.Update(RefreshMsg{})
+	if !panel.HasContent() {
+		t.Error("expected HasContent() == true after RefreshMsg")
+	}
+}
+
 // TestNewReviewQueuePanel verifies the exported constructor creates a usable panel.
 func TestNewReviewQueuePanel(t *testing.T) {
 	reader := newStubPRReader()

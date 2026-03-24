@@ -635,6 +635,19 @@ func (d *DB) ListWatches() ([]Watch, error) {
 	return scanWatches(rows)
 }
 
+// ListWatchesByPRURL returns all watches for a specific PR URL.
+func (d *DB) ListWatchesByPRURL(prURL string) ([]Watch, error) {
+	rows, err := d.db.Query(`
+		SELECT id, pr_url, pr_number, repo, trigger_expr, action_expr, status, created_at, fired_at
+		FROM watches WHERE pr_url = ?
+	`, prURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanWatches(rows)
+}
+
 // GetWatch returns the watch with the given ID.
 func (d *DB) GetWatch(id string) (Watch, error) {
 	row := d.db.QueryRow(`

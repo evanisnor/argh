@@ -80,6 +80,8 @@ func (p *MyPRsPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	switch m := msg.(type) {
 	case ResizeMsg:
 		p.width = m.Width
+	case RefreshMsg:
+		_ = p.refresh()
 	case DBEventMsg:
 		switch m.Event.Type {
 		case eventbus.PRUpdated, eventbus.CIChanged, eventbus.ReviewChanged, eventbus.PRRemoved, eventbus.SessionIDsAssigned:

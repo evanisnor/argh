@@ -24,10 +24,21 @@ func (s *stubWatchReader) ListWatches() ([]persistence.Watch, error) {
 	return s.watches, nil
 }
 
+// stubWatchCanceller is a test double for WatchCanceller.
+type stubWatchCanceller struct {
+	cancelledID string
+	cancelErr   error
+}
+
+func (s *stubWatchCanceller) CancelWatch(id string) error {
+	s.cancelledID = id
+	return s.cancelErr
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func makeWatchesPanel(reader *stubWatchReader) *WatchesPanel {
-	return NewWatchesPanel(reader)
+	return NewWatchesPanel(reader, nil)
 }
 
 func makeWatch(id, repo string, prNumber int, status string) persistence.Watch {
@@ -288,6 +299,91 @@ func TestWatchesPanel_RefreshError(t *testing.T) {
 	}
 }
 
+// TestWatchesPanel_RefreshMsg verifies that a RefreshMsg reloads data from the reader.
+func TestWatchesPanel_RefreshMsg(t *testing.T) {
+	reader := &stubWatchReader{}
+	panel := makeWatchesPanel(reader)
+	if panel.HasContent() {
+		t.Fatal("expected no content initially")
+	}
+	reader.watches = []persistence.Watch{
+		{ID: "w1", PRURL: "url", PRNumber: 1, Repo: "r/r", TriggerExpr: "on:ci-pass", ActionExpr: "merge", Status: "waiting"},
+	}
+	panel.Update(RefreshMsg{})
+	if !panel.HasContent() {
+		t.Error("expected HasContent() == true after RefreshMsg")
+	}
+}
+
+// TestWatchesPanel_CancelWatchMsg verifies that CancelWatchMsg cancels the watch
+// under the cursor and returns a WatchChangedMsg.
+func TestWatchesPanel_CancelWatchMsg(t *testing.T) {
+	canceller := &stubWatchCanceller{}
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{
+			makeWatch("w1", "r", 1, "waiting"),
+			makeWatch("w2", "r", 2, "waiting"),
+		},
+	}
+	panel := NewWatchesPanel(reader, canceller)
+	panel.Update(MoveFocusMsg{Down: true}) // cursor on w2
+
+	_, cmd := panel.Update(CancelWatchMsg{})
+	if cmd == nil {
+		t.Fatal("expected non-nil Cmd from CancelWatchMsg")
+	}
+	msg := cmd()
+	if _, ok := msg.(WatchChangedMsg); !ok {
+		t.Fatalf("expected WatchChangedMsg, got %T", msg)
+	}
+	if canceller.cancelledID != "w2" {
+		t.Errorf("expected CancelWatch called with w2, got %q", canceller.cancelledID)
+	}
+}
+
+// TestWatchesPanel_CancelWatchMsg_NoRows verifies CancelWatchMsg is a no-op with no watches.
+func TestWatchesPanel_CancelWatchMsg_NoRows(t *testing.T) {
+	canceller := &stubWatchCanceller{}
+	panel := NewWatchesPanel(&stubWatchReader{}, canceller)
+	_, cmd := panel.Update(CancelWatchMsg{})
+	if cmd != nil {
+		t.Error("expected nil Cmd when no rows")
+	}
+}
+
+// TestWatchesPanel_CancelWatchMsg_NoCanceller verifies CancelWatchMsg is a no-op without a canceller.
+func TestWatchesPanel_CancelWatchMsg_NoCanceller(t *testing.T) {
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{makeWatch("w1", "r", 1, "waiting")},
+	}
+	panel := NewWatchesPanel(reader, nil)
+	_, cmd := panel.Update(CancelWatchMsg{})
+	if cmd != nil {
+		t.Error("expected nil Cmd when canceller is nil")
+	}
+}
+
+// TestWatchesPanel_CancelWatchMsg_Error verifies CancelWatchMsg returns CommandResultMsg on error.
+func TestWatchesPanel_CancelWatchMsg_Error(t *testing.T) {
+	canceller := &stubWatchCanceller{cancelErr: fmt.Errorf("db error")}
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{makeWatch("w1", "r", 1, "waiting")},
+	}
+	panel := NewWatchesPanel(reader, canceller)
+	_, cmd := panel.Update(CancelWatchMsg{})
+	if cmd == nil {
+		t.Fatal("expected non-nil Cmd")
+	}
+	msg := cmd()
+	result, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg on error, got %T", msg)
+	}
+	if result.Err == nil {
+		t.Error("expected non-nil Err")
+	}
+}
+
 // TestWatchesPanel_IDTruncation verifies that watch IDs longer than 8 chars are
 // truncated in the view.
 func TestWatchesPanel_IDTruncation(t *testing.T) {
@@ -437,7 +533,7 @@ func TestNewWatchesPanel(t *testing.T) {
 	reader := &stubWatchReader{
 		watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "waiting")},
 	}
-	panel := NewWatchesPanel(reader)
+	panel := NewWatchesPanel(reader, nil)
 	if panel == nil {
 		t.Fatal("expected non-nil panel")
 	}
@@ -452,7 +548,7 @@ func TestNewWatchesPanel(t *testing.T) {
 // allocated width.
 func TestWatchesPanel_ResizeMsg(t *testing.T) {
 	reader := &stubWatchReader{}
-	panel := NewWatchesPanel(reader)
+	panel := NewWatchesPanel(reader, nil)
 	sm, _ := panel.Update(ResizeMsg{Width: 100, Height: 20})
 	p := sm.(*WatchesPanel)
 	if p.width != 100 {
@@ -470,7 +566,7 @@ func TestWatchesPanel_TriggerTruncation(t *testing.T) {
 				TriggerExpr: longTrigger, ActionExpr: "merge", Status: "waiting"},
 		},
 	}
-	panel := NewWatchesPanel(reader)
+	panel := NewWatchesPanel(reader, nil)
 	panel.Update(ResizeMsg{Width: 60, Height: 10})
 	view := panel.View()
 	for _, line := range strings.Split(view, "\n") {

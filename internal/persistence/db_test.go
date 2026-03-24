@@ -905,6 +905,53 @@ func TestWatch_ListAll(t *testing.T) {
 	}
 }
 
+func TestWatch_ListByPRURL(t *testing.T) {
+	db := openTestDB(t)
+
+	for _, w := range []Watch{
+		{ID: "w1", PRURL: "https://github.com/r/r/pull/1", PRNumber: 1, Repo: "r/r", TriggerExpr: "on:ci-pass", ActionExpr: "merge", Status: "waiting", CreatedAt: makeTime("2024-01-01T00:00:00Z")},
+		{ID: "w2", PRURL: "https://github.com/r/r/pull/2", PRNumber: 2, Repo: "r/r", TriggerExpr: "on:ci-pass", ActionExpr: "notify", Status: "waiting", CreatedAt: makeTime("2024-01-01T00:00:00Z")},
+		{ID: "w3", PRURL: "https://github.com/r/r/pull/1", PRNumber: 1, Repo: "r/r", TriggerExpr: "on:approved", ActionExpr: "merge", Status: "waiting", CreatedAt: makeTime("2024-01-01T00:00:00Z")},
+	} {
+		if err := db.InsertWatch(w); err != nil {
+			t.Fatalf("InsertWatch(%s): %v", w.ID, err)
+		}
+	}
+
+	got, err := db.ListWatchesByPRURL("https://github.com/r/r/pull/1")
+	if err != nil {
+		t.Fatalf("ListWatchesByPRURL() error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 watches for pull/1, got %d", len(got))
+	}
+	for _, w := range got {
+		if w.PRURL != "https://github.com/r/r/pull/1" {
+			t.Errorf("unexpected watch PRURL: %s", w.PRURL)
+		}
+	}
+}
+
+func TestWatch_ListByPRURL_Empty(t *testing.T) {
+	db := openTestDB(t)
+	got, err := db.ListWatchesByPRURL("https://github.com/r/r/pull/999")
+	if err != nil {
+		t.Fatalf("ListWatchesByPRURL() error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 watches, got %d", len(got))
+	}
+}
+
+func TestWatch_ListByPRURL_QueryError(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, err := db.ListWatchesByPRURL("https://github.com/r/r/pull/1")
+	if err == nil {
+		t.Error("expected error from ListWatchesByPRURL on closed DB")
+	}
+}
+
 // ── Session IDs ──────────────────────────────────────────────────────────────
 
 func TestSessionID_UpsertAndGet(t *testing.T) {

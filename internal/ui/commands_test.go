@@ -1214,12 +1214,12 @@ func TestExecute_Watch(t *testing.T) {
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
 	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ci-pass", "merge"}))
-	r, ok := msg.(CommandResultMsg)
+	r, ok := msg.(WatchChangedMsg)
 	if !ok {
-		t.Fatalf("expected CommandResultMsg, got %T", msg)
+		t.Fatalf("expected WatchChangedMsg, got %T", msg)
 	}
-	if r.Err != nil {
-		t.Errorf("unexpected error: %v", r.Err)
+	if r.Status == "" {
+		t.Error("expected non-empty status")
 	}
 	if !we.addCalled {
 		t.Error("AddWatch should have been called")
@@ -1339,12 +1339,12 @@ func TestExecute_WatchCancel_Success(t *testing.T) {
 	store := &fakePRStore{}
 	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
 	msg := runCmd(t, exec.Execute("watch", []string{"cancel", "w42"}))
-	r, ok := msg.(CommandResultMsg)
+	r, ok := msg.(WatchChangedMsg)
 	if !ok {
-		t.Fatalf("expected CommandResultMsg, got %T", msg)
+		t.Fatalf("expected WatchChangedMsg, got %T", msg)
 	}
-	if r.Err != nil {
-		t.Errorf("unexpected error: %v", r.Err)
+	if r.Status == "" {
+		t.Error("expected non-empty status")
 	}
 	if !we.cancelCalled {
 		t.Error("CancelWatch should have been called")

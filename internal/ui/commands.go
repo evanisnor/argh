@@ -80,6 +80,13 @@ type CommandResultMsg struct {
 	Status string
 }
 
+// WatchChangedMsg is sent when a watch is added or cancelled so the model can
+// immediately refresh the watches panel and PR panels without waiting for
+// the next poll-driven event.
+type WatchChangedMsg struct {
+	Status string
+}
+
 // CommandComposeMsg is sent when a command needs a body composed by the user
 // (e.g. :review, :comment). The UI should open a ComposeModel for this.
 type CommandComposeMsg struct {
@@ -536,7 +543,7 @@ func (e *CommandExecutor) execWatch(args []string) tea.Cmd {
 			if err := e.watches.CancelWatch(id); err != nil {
 				return CommandResultMsg{Err: err}
 			}
-			return CommandResultMsg{Status: fmt.Sprintf("watch %s cancelled", id)}
+			return WatchChangedMsg{Status: fmt.Sprintf("watch %s cancelled", id)}
 		}
 	default:
 		// :watch [#pr] <trigger> <action>
@@ -555,7 +562,7 @@ func (e *CommandExecutor) execWatch(args []string) tea.Cmd {
 			if err := e.watches.AddWatch(pr.Repo, pr.Number, pr.URL, trigger, action); err != nil {
 				return CommandResultMsg{Err: err}
 			}
-			return CommandResultMsg{Status: fmt.Sprintf("watch added for %s#%d", pr.Repo, pr.Number)}
+			return WatchChangedMsg{Status: fmt.Sprintf("watch added for %s#%d", pr.Repo, pr.Number)}
 		}
 	}
 }

@@ -769,6 +769,22 @@ func TestMyPRsPanel_RefreshErrors(t *testing.T) {
 	})
 }
 
+// TestMyPRsPanel_RefreshMsg verifies that a RefreshMsg reloads data from the reader.
+func TestMyPRsPanel_RefreshMsg(t *testing.T) {
+	reader := newStubPRReader()
+	panel := newMyPRsPanelWithClock(reader, "", stubClock{now: t2})
+	if panel.HasContent() {
+		t.Fatal("expected no content initially")
+	}
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", Repo: "repo", Number: 1, Title: "PR", Status: "open", URL: "https://gh/1", LastActivityAt: t0},
+	}
+	panel.Update(RefreshMsg{})
+	if !panel.HasContent() {
+		t.Error("expected HasContent() == true after RefreshMsg")
+	}
+}
+
 // TestMyPRsPanel_CursorClamping verifies the cursor is clamped when PRs are
 // refreshed to a shorter list.
 func TestMyPRsPanel_CursorClamping(t *testing.T) {

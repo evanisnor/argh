@@ -16,6 +16,14 @@ type WatchReader interface {
 	ListWatches() ([]persistence.Watch, error)
 }
 
+// WatchCanceller cancels a watch by ID.
+type WatchCanceller interface {
+	CancelWatch(id string) error
+}
+
+// CancelWatchMsg is dispatched to the watches panel when the user presses d.
+type CancelWatchMsg struct{}
+
 // watchRow holds the display data for a single row in the Watches panel.
 type watchRow struct {
 	watch persistence.Watch
@@ -23,22 +31,24 @@ type watchRow struct {
 
 // WatchesPanel renders the Watches panel.
 type WatchesPanel struct {
-	reader   WatchReader
-	rows     []watchRow
-	cursor   int
-	focused  bool
-	flashing map[string]bool // Watch ID → flash active
-	width    int             // allocated terminal width, 0 = no constraint
+	reader    WatchReader
+	canceller WatchCanceller
+	rows      []watchRow
+	cursor    int
+	focused   bool
+	flashing  map[string]bool // Watch ID → flash active
+	width     int             // allocated terminal width, 0 = no constraint
 }
 
 // SetFocused sets whether this panel currently holds keyboard focus.
 func (p *WatchesPanel) SetFocused(focused bool) { p.focused = focused }
 
 // NewWatchesPanel creates a new Watches panel backed by the given reader.
-func NewWatchesPanel(reader WatchReader) *WatchesPanel {
+func NewWatchesPanel(reader WatchReader, canceller WatchCanceller) *WatchesPanel {
 	p := &WatchesPanel{
-		reader:   reader,
-		flashing: make(map[string]bool),
+		reader:    reader,
+		canceller: canceller,
+		flashing:  make(map[string]bool),
 	}
 	_ = p.refresh()
 	return p
@@ -49,6 +59,19 @@ func (p *WatchesPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 	switch m := msg.(type) {
 	case ResizeMsg:
 		p.width = m.Width
+	case CancelWatchMsg:
+		if len(p.rows) == 0 || p.canceller == nil {
+			return p, nil
+		}
+		id := p.rows[p.cursor].watch.ID
+		return p, func() tea.Msg {
+			if err := p.canceller.CancelWatch(id); err != nil {
+				return CommandResultMsg{Err: fmt.Errorf("cancel watch: %w", err)}
+			}
+			return WatchChangedMsg{Status: fmt.Sprintf("watch %s cancelled", id)}
+		}
+	case RefreshMsg:
+		_ = p.refresh()
 	case DBEventMsg:
 		if m.Event.Type == eventbus.WatchFired {
 			if w, ok := m.Event.After.(persistence.Watch); ok {

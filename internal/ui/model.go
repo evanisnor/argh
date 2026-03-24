@@ -40,6 +40,9 @@ type FocusCommandBarMsg struct{}
 // BlurCommandBarMsg is sent to the command bar when the user presses Esc.
 type BlurCommandBarMsg struct{}
 
+// RefreshMsg tells a panel to reload its data from the database immediately.
+type RefreshMsg struct{}
+
 // ShowDiffMsg is sent to the focused panel when the user presses d.
 type ShowDiffMsg struct{}
 
@@ -117,7 +120,7 @@ type CursorNavigator interface {
 type PRDetailReader interface {
 	ListCheckRuns(prID string) ([]persistence.CheckRun, error)
 	ListReviewThreads(prID string) ([]persistence.ReviewThread, error)
-	ListWatches() ([]persistence.Watch, error)
+	ListWatchesByPRURL(prURL string) ([]persistence.Watch, error)
 	ListTimelineEvents(prID string) ([]persistence.TimelineEvent, error)
 }
 
@@ -341,6 +344,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.commandBar, cmd = m.commandBar.Update(BlurCommandBarMsg{})
 		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+
+	case WatchChangedMsg:
+		m.statusText = ev.Status
+		m.statusEventType = eventbus.PRUpdated
+		m.lastEventTime = m.clock.Now()
+		m.commandBarFocused = false
+		var cmds []tea.Cmd
+		var c tea.Cmd
+		m.commandBar, c = m.commandBar.Update(BlurCommandBarMsg{})
+		cmds = append(cmds, c)
+		m.watches, c = m.watches.Update(RefreshMsg{})
+		cmds = append(cmds, c)
+		m.myPRs, c = m.myPRs.Update(RefreshMsg{})
+		cmds = append(cmds, c)
+		m.reviewQueue, c = m.reviewQueue.Update(RefreshMsg{})
+		cmds = append(cmds, c)
+		cmds = append(cmds, waitForDBEvent(m.eventCh))
+		return m, tea.Batch(cmds...)
 
 	case CommandComposeMsg:
 		m.statusText = ev.Prompt
@@ -681,6 +702,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}, waitForDBEvent(m.eventCh))
 
 	case "d":
+		if m.focused == PanelWatches {
+			return m.dispatchToFocused(CancelWatchMsg{})
+		}
 		return m.dispatchToFocused(ShowDiffMsg{})
 
 	case "a":
@@ -878,7 +902,7 @@ func (m Model) buildPRFocusedMsg(pr *persistence.PullRequest) PRFocusedMsg {
 	}
 	msg.CheckRuns, _ = m.detailReader.ListCheckRuns(pr.ID)
 	msg.Threads, _ = m.detailReader.ListReviewThreads(pr.ID)
-	msg.Watches, _ = m.detailReader.ListWatches()
+	msg.Watches, _ = m.detailReader.ListWatchesByPRURL(pr.URL)
 	msg.TimelineEvents, _ = m.detailReader.ListTimelineEvents(pr.ID)
 	return msg
 }

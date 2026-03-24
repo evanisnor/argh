@@ -648,7 +648,7 @@ func (s *stubPRDetailReader) ListCheckRuns(_ string) ([]persistence.CheckRun, er
 func (s *stubPRDetailReader) ListReviewThreads(_ string) ([]persistence.ReviewThread, error) {
 	return s.threads, nil
 }
-func (s *stubPRDetailReader) ListWatches() ([]persistence.Watch, error) {
+func (s *stubPRDetailReader) ListWatchesByPRURL(_ string) ([]persistence.Watch, error) {
 	return s.watches, nil
 }
 func (s *stubPRDetailReader) ListTimelineEvents(_ string) ([]persistence.TimelineEvent, error) {
@@ -1753,6 +1753,21 @@ func TestKey_D_SendsShowDiffToFocusedPanel(t *testing.T) {
 	}
 }
 
+// TestKey_D_SendsCancelWatchMsgToWatchesPanel verifies d dispatches CancelWatchMsg
+// when the Watches panel is focused.
+func TestKey_D_SendsCancelWatchMsgToWatchesPanel(t *testing.T) {
+	watches := newStub("watches", true)
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		watches, newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelWatches
+
+	m = applyMsg(m, keyRune('d'))
+
+	if _, ok := watches.lastMsg.(CancelWatchMsg); !ok {
+		t.Errorf("watches panel should receive CancelWatchMsg, got %T", watches.lastMsg)
+	}
+}
+
 // TestKey_A_ApprovesOnlyFromReviewQueue verifies a sends ApprovePRMsg only
 // when the Review Queue panel is focused.
 func TestKey_A_ApprovesOnlyFromReviewQueue(t *testing.T) {
@@ -2174,6 +2189,35 @@ func TestModel_CommandResultMsg_ErrorPath(t *testing.T) {
 	m = applyMsg(m, CommandResultMsg{Err: fmt.Errorf("boom")})
 	if m.statusText != "error: boom" {
 		t.Errorf("statusText: got %q, want %q", m.statusText, "error: boom")
+	}
+}
+
+// ── WatchChangedMsg ──────────────────────────────────────────────────────────
+
+func TestModel_WatchChangedMsg_RefreshesPanels(t *testing.T) {
+	myPRs := newStub("myPRs", true)
+	rq := newStub("reviewQueue", true)
+	watches := newStub("watches", false)
+	cmdBar := newStub("cmdBar", false)
+	m, _ := newTestModel(myPRs, rq, watches, newStub("detail", false), cmdBar)
+	m.commandBarFocused = true
+
+	m = applyMsg(m, WatchChangedMsg{Status: "watch added for r/r#1"})
+
+	if m.statusText != "watch added for r/r#1" {
+		t.Errorf("statusText: got %q, want %q", m.statusText, "watch added for r/r#1")
+	}
+	if m.commandBarFocused {
+		t.Error("commandBarFocused should be false after WatchChangedMsg")
+	}
+	if _, ok := myPRs.lastMsg.(RefreshMsg); !ok {
+		t.Errorf("myPRs should receive RefreshMsg, got %T", myPRs.lastMsg)
+	}
+	if _, ok := rq.lastMsg.(RefreshMsg); !ok {
+		t.Errorf("reviewQueue should receive RefreshMsg, got %T", rq.lastMsg)
+	}
+	if _, ok := watches.lastMsg.(RefreshMsg); !ok {
+		t.Errorf("watches should receive RefreshMsg, got %T", watches.lastMsg)
 	}
 }
 
