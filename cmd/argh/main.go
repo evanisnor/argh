@@ -227,7 +227,7 @@ var productionDeps = func() tuiDeps {
 // execOpen is the function used to open a URL via the system browser.
 // It is a variable so tests can replace it without launching Finder.
 var execOpen = func(url string) error {
-	return exec.Command("open", url).Run()
+	return exec.Command("open", "-g", url).Run()
 }
 
 // osBrowserOpener opens a URL using the macOS open(1) command.
