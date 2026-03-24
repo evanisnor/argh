@@ -212,9 +212,6 @@ func (p *MyPRsPanel) buildPRCells(row prRow, now time.Time) []string {
 		watchIcon = "👁"
 	}
 	title := row.pr.Title
-	if row.pr.Draft {
-		title = "[draft] " + title
-	}
 	return []string{
 		sid,
 		watchIcon,

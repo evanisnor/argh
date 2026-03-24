@@ -103,7 +103,7 @@ func TestMyPRsPanel_Sorting(t *testing.T) {
 	}
 }
 
-// TestMyPRsPanel_DraftRendering verifies that draft PRs are prefixed with [draft].
+// TestMyPRsPanel_DraftRendering verifies that draft PRs show "draft" in the status column.
 func TestMyPRsPanel_DraftRendering(t *testing.T) {
 	reader := newStubPRReader()
 	reader.prs = []persistence.PullRequest{
@@ -115,9 +115,6 @@ func TestMyPRsPanel_DraftRendering(t *testing.T) {
 	panel := makePanel(reader)
 	view := panel.View()
 
-	if !strings.Contains(view, "[draft]") {
-		t.Errorf("expected '[draft]' prefix in view, got:\n%s", view)
-	}
 	if !strings.Contains(view, "my draft") {
 		t.Errorf("expected title 'my draft' in view")
 	}

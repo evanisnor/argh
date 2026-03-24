@@ -2041,3 +2041,17 @@ tasks:
       Existing FocusedRowHighlight tests updated to call SetFocused(true) before
       View(). stubSubModel in model_test.go implements Focusable to cover the
       panelView type assertion branch. 100% UI coverage maintained.
+
+  - id: 127
+    title: "Remove redundant [draft] prefix from PR titles"
+    status: done
+    depends_on: [17]
+    description: >
+      Draft PRs in the My Pull Requests panel had their title prefixed with
+      "[draft]" which is redundant since the status column already shows "draft"
+      via prStatusDisplay. Remove the 3-line block that prepends the prefix in
+      panel_prs.go and update TestMyPRsPanel_DraftRendering to no longer assert
+      the prefix is present.
+    testing: >
+      TestMyPRsPanel_DraftRendering still verifies the title text and "draft"
+      status column. 100% coverage maintained.
