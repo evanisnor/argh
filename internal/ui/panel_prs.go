@@ -50,9 +50,13 @@ type MyPRsPanel struct {
 	username string
 	rows     []prRow
 	cursor   int
+	focused  bool
 	flashing map[string]bool // PR ID → flash active
 	width    int             // allocated terminal width, 0 = no constraint
 }
+
+// SetFocused sets whether this panel currently holds keyboard focus.
+func (p *MyPRsPanel) SetFocused(focused bool) { p.focused = focused }
 
 // NewMyPRsPanel creates a new My PRs panel backed by the given reader.
 func NewMyPRsPanel(reader PRReader, login string) *MyPRsPanel {
@@ -176,7 +180,7 @@ func (p *MyPRsPanel) View() string {
 		if p.flashing[r.pr.ID] {
 			base = base.Bold(true)
 		}
-		if row == p.cursor {
+		if row == p.cursor && p.focused {
 			base = base.Reverse(true)
 		}
 		return base

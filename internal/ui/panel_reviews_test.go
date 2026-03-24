@@ -650,6 +650,7 @@ func TestReviewQueuePanel_FocusedRowHighlight(t *testing.T) {
 	reader.sessionIDs["https://gh/1"] = "a"
 
 	panel := makeReviewPanel(reader, "")
+	panel.SetFocused(true)
 	// cursor starts at 0 → focused row code path is exercised.
 	view := panel.View()
 	if !strings.Contains(view, "focused PR") {

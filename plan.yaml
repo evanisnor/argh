@@ -2025,3 +2025,19 @@ tasks:
       MyPRs wraps to top of ReviewQueue and vice versa. Up at top of ReviewQueue
       wraps to bottom of MyPRs. Watches excluded from wrapping. Empty target
       panel handled. 100% coverage maintained.
+
+  - id: 126
+    title: "Fix: Global PR selection highlighting — only focused panel highlights cursor"
+    status: done
+    depends_on: [17, 18, 19]
+    description: >
+      Each panel independently highlighted its cursor row with Reverse(true),
+      but panels had no way to know whether they held keyboard focus. All panels
+      showed a highlighted row simultaneously. Fix by adding a Focusable interface
+      with SetFocused(bool), implementing it on MyPRsPanel, ReviewQueuePanel, and
+      WatchesPanel, and calling SetFocused in panelView before View(). Each panel
+      now only applies Reverse(true) when focused is true.
+    testing: >
+      Existing FocusedRowHighlight tests updated to call SetFocused(true) before
+      View(). stubSubModel in model_test.go implements Focusable to cover the
+      panelView type assertion branch. 100% UI coverage maintained.

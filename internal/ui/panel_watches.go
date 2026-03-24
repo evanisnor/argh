@@ -26,9 +26,13 @@ type WatchesPanel struct {
 	reader   WatchReader
 	rows     []watchRow
 	cursor   int
+	focused  bool
 	flashing map[string]bool // Watch ID → flash active
 	width    int             // allocated terminal width, 0 = no constraint
 }
+
+// SetFocused sets whether this panel currently holds keyboard focus.
+func (p *WatchesPanel) SetFocused(focused bool) { p.focused = focused }
 
 // NewWatchesPanel creates a new Watches panel backed by the given reader.
 func NewWatchesPanel(reader WatchReader) *WatchesPanel {
@@ -82,7 +86,7 @@ func (p *WatchesPanel) View() string {
 		return sb.String()
 	}
 	for i, row := range p.rows {
-		sb.WriteString(p.renderRow(row, i == p.cursor))
+		sb.WriteString(p.renderRow(row, i == p.cursor && p.focused))
 		if i < len(p.rows)-1 {
 			sb.WriteString("\n")
 		}

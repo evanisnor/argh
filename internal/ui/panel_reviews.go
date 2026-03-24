@@ -57,9 +57,13 @@ type ReviewQueuePanel struct {
 	username string
 	rows     []reviewRow
 	cursor   int
+	focused  bool
 	flashing map[string]bool
 	width    int // allocated terminal width, 0 = no constraint
 }
+
+// SetFocused sets whether this panel currently holds keyboard focus.
+func (p *ReviewQueuePanel) SetFocused(focused bool) { p.focused = focused }
 
 // NewReviewQueuePanel creates a new Review Queue panel backed by the given reader.
 func NewReviewQueuePanel(reader ReviewReader, username string) *ReviewQueuePanel {
@@ -137,7 +141,7 @@ func (p *ReviewQueuePanel) View() string {
 		if p.flashing[r.pr.ID] {
 			base = base.Bold(true)
 		}
-		if row == p.cursor {
+		if row == p.cursor && p.focused {
 			base = base.Reverse(true)
 		}
 		return base

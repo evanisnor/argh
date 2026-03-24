@@ -87,6 +87,14 @@ type RowCounter interface {
 	RowCount() int
 }
 
+// Focusable is the optional interface implemented by panels that need to know
+// whether they currently hold keyboard focus. The root model calls SetFocused
+// before each View() so the panel can gate visual indicators like cursor
+// highlighting on focus state.
+type Focusable interface {
+	SetFocused(focused bool)
+}
+
 // PRSelector is the optional interface implemented by panels that hold a list
 // of pull requests with a cursor. The root model uses a type assertion to check
 // for this when handling the Enter key so that the detail modal is only opened
@@ -1029,6 +1037,9 @@ func (m Model) panelView(title string, sub SubModel, focused bool, contentHeight
 		// Height sets the inner height. NormalBorder adds 1 line top and 1 line
 		// bottom. +1 accounts for the title line inside the panel.
 		border = border.Height(contentHeight + 1)
+	}
+	if f, ok := sub.(Focusable); ok {
+		f.SetFocused(focused)
 	}
 	body := sub.View()
 	return border.Render(m.theme.PanelTitle.Render(title) + "\n" + body)

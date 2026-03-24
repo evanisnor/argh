@@ -374,6 +374,7 @@ func TestWatchesPanel_FocusedRowHighlight(t *testing.T) {
 		watches: []persistence.Watch{makeWatch("w1", "repo/focused", 1, "waiting")},
 	}
 	panel := makeWatchesPanel(reader)
+	panel.SetFocused(true)
 	view := panel.View()
 
 	// The focused row (cursor=0) must appear in the view.

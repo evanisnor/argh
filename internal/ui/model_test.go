@@ -67,6 +67,8 @@ func (s *stubSubModel) RowCount() int {
 	return 0
 }
 
+func (s *stubSubModel) SetFocused(focused bool) {}
+
 // stubCommandBarOverlay extends stubSubModel to implement CommandBarOverlay,
 // allowing tests to exercise the suggestion overlay path in Model.View().
 type stubCommandBarOverlay struct {
