@@ -2391,3 +2391,295 @@ if !strings.Contains(view, "DETAIL") {
 t.Errorf("expected DETAIL in view after resize with open detail pane; got:\n%s", view)
 }
 }
+
+// ── stubCursorPanel ───────────────────────────────────────────────────────────
+// A test double that implements SubModel + RowCounter + CursorNavigator + PRSelector.
+type stubCursorPanel struct {
+	*stubSubModel
+	rows   int
+	cursor int
+	pr     *persistence.PullRequest
+}
+
+func newCursorStub(name string, rows int, pr *persistence.PullRequest) *stubCursorPanel {
+	return &stubCursorPanel{
+		stubSubModel: newStub(name, rows > 0),
+		rows:         rows,
+		pr:           pr,
+	}
+}
+
+func (s *stubCursorPanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
+	if m, ok := msg.(MoveFocusMsg); ok {
+		if m.Down {
+			if s.cursor < s.rows-1 {
+				s.cursor++
+			}
+		} else {
+			if s.cursor > 0 {
+				s.cursor--
+			}
+		}
+	}
+	s.lastMsg = msg
+	return s, nil
+}
+
+func (s *stubCursorPanel) RowCount() int           { return s.rows }
+func (s *stubCursorPanel) CursorPosition() int     { return s.cursor }
+func (s *stubCursorPanel) SetCursor(pos int)        {
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= s.rows && s.rows > 0 {
+		pos = s.rows - 1
+	}
+	s.cursor = pos
+}
+func (s *stubCursorPanel) SelectedPR() *persistence.PullRequest { return s.pr }
+
+// ── Tab: skip invisible watches ───────────────────────────────────────────────
+
+func TestKey_Tab_SkipsInvisibleWatches(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false), // invisible
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+
+	tabMsg := tea.KeyMsg{Type: tea.KeyTab}
+
+	m = applyMsg(m, tabMsg)
+	if m.focused != PanelReviewQueue {
+		t.Errorf("after 1 tab: want PanelReviewQueue, got %d", m.focused)
+	}
+
+	// Second tab should skip invisible watches and wrap back to MyPRs.
+	m = applyMsg(m, tabMsg)
+	if m.focused != PanelMyPRs {
+		t.Errorf("after 2 tabs with invisible watches: want PanelMyPRs, got %d", m.focused)
+	}
+}
+
+func TestKey_Tab_CyclesAllThreeWhenWatchesVisible(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", true), // visible
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+
+	tabMsg := tea.KeyMsg{Type: tea.KeyTab}
+
+	m = applyMsg(m, tabMsg)
+	if m.focused != PanelReviewQueue {
+		t.Errorf("after 1 tab: want PanelReviewQueue, got %d", m.focused)
+	}
+
+	m = applyMsg(m, tabMsg)
+	if m.focused != PanelWatches {
+		t.Errorf("after 2 tabs: want PanelWatches, got %d", m.focused)
+	}
+
+	m = applyMsg(m, tabMsg)
+	if m.focused != PanelMyPRs {
+		t.Errorf("after 3 tabs (wrap): want PanelMyPRs, got %d", m.focused)
+	}
+}
+
+// ── j/k wrapping between MyPRs and ReviewQueue ───────────────────────────────
+
+func TestKey_J_AtBottomOfMyPRs_WrapsToReviewQueue(t *testing.T) {
+	pr1 := &persistence.PullRequest{ID: "pr1"}
+	pr2 := &persistence.PullRequest{ID: "pr2"}
+	myPRs := newCursorStub("myPRs", 2, pr1)
+	rq := newCursorStub("reviewQueue", 3, pr2)
+
+	m, _ := newTestModel(myPRs, rq, newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+	// Move cursor to last row
+	myPRs.cursor = 1 // row count is 2, so index 1 is the last
+
+	m = applyMsg(m, keyRune('j'))
+
+	if m.focused != PanelReviewQueue {
+		t.Errorf("expected focus on ReviewQueue, got %d", m.focused)
+	}
+	rqPanel := m.reviewQueue.(*stubCursorPanel)
+	if rqPanel.CursorPosition() != 0 {
+		t.Errorf("expected ReviewQueue cursor at 0, got %d", rqPanel.CursorPosition())
+	}
+}
+
+func TestKey_K_AtTopOfReviewQueue_WrapsToMyPRs(t *testing.T) {
+	pr1 := &persistence.PullRequest{ID: "pr1"}
+	pr2 := &persistence.PullRequest{ID: "pr2"}
+	myPRs := newCursorStub("myPRs", 3, pr1)
+	rq := newCursorStub("reviewQueue", 2, pr2)
+
+	m, _ := newTestModel(myPRs, rq, newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelReviewQueue
+	rq.cursor = 0 // at the top
+
+	m = applyMsg(m, keyRune('k'))
+
+	if m.focused != PanelMyPRs {
+		t.Errorf("expected focus on MyPRs, got %d", m.focused)
+	}
+	myPanel := m.myPRs.(*stubCursorPanel)
+	if myPanel.CursorPosition() != 2 {
+		t.Errorf("expected MyPRs cursor at bottom (2), got %d", myPanel.CursorPosition())
+	}
+}
+
+func TestKey_J_AtBottomOfReviewQueue_WrapsToMyPRs(t *testing.T) {
+	pr1 := &persistence.PullRequest{ID: "pr1"}
+	pr2 := &persistence.PullRequest{ID: "pr2"}
+	myPRs := newCursorStub("myPRs", 2, pr1)
+	rq := newCursorStub("reviewQueue", 2, pr2)
+
+	m, _ := newTestModel(myPRs, rq, newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelReviewQueue
+	rq.cursor = 1 // at the bottom
+
+	m = applyMsg(m, keyRune('j'))
+
+	if m.focused != PanelMyPRs {
+		t.Errorf("expected focus on MyPRs, got %d", m.focused)
+	}
+	myPanel := m.myPRs.(*stubCursorPanel)
+	if myPanel.CursorPosition() != 0 {
+		t.Errorf("expected MyPRs cursor at 0, got %d", myPanel.CursorPosition())
+	}
+}
+
+func TestKey_K_AtTopOfMyPRs_WrapsToReviewQueue(t *testing.T) {
+	pr1 := &persistence.PullRequest{ID: "pr1"}
+	pr2 := &persistence.PullRequest{ID: "pr2"}
+	myPRs := newCursorStub("myPRs", 2, pr1)
+	rq := newCursorStub("reviewQueue", 3, pr2)
+
+	m, _ := newTestModel(myPRs, rq, newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+	myPRs.cursor = 0
+
+	m = applyMsg(m, keyRune('k'))
+
+	if m.focused != PanelReviewQueue {
+		t.Errorf("expected focus on ReviewQueue, got %d", m.focused)
+	}
+	rqPanel := m.reviewQueue.(*stubCursorPanel)
+	if rqPanel.CursorPosition() != 2 {
+		t.Errorf("expected ReviewQueue cursor at bottom (2), got %d", rqPanel.CursorPosition())
+	}
+}
+
+func TestKey_J_MiddleOfPanel_DoesNotWrap(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1"}
+	myPRs := newCursorStub("myPRs", 3, pr)
+	rq := newCursorStub("reviewQueue", 2, nil)
+
+	m, _ := newTestModel(myPRs, rq, newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+	myPRs.cursor = 0 // not at the bottom
+
+	m = applyMsg(m, keyRune('j'))
+
+	if m.focused != PanelMyPRs {
+		t.Errorf("expected focus to remain on MyPRs, got %d", m.focused)
+	}
+	if myPRs.CursorPosition() != 1 {
+		t.Errorf("expected cursor at 1, got %d", myPRs.CursorPosition())
+	}
+}
+
+func TestKey_JK_Watches_NoWrapping(t *testing.T) {
+	watches := newStub("watches", true)
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		watches,
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	m.focused = PanelWatches
+
+	m = applyMsg(m, keyRune('j'))
+	if m.focused != PanelWatches {
+		t.Errorf("j on Watches should not change focus, got %d", m.focused)
+	}
+
+	m = applyMsg(m, keyRune('k'))
+	if m.focused != PanelWatches {
+		t.Errorf("k on Watches should not change focus, got %d", m.focused)
+	}
+}
+
+func TestKey_J_EmptyPanel_DoesNotWrap(t *testing.T) {
+	myPRs := newCursorStub("myPRs", 0, nil) // empty panel
+	rq := newCursorStub("reviewQueue", 2, nil)
+
+	m, _ := newTestModel(myPRs, rq, newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+
+	m = applyMsg(m, keyRune('j'))
+
+	// Should stay on MyPRs — empty panels don't wrap.
+	if m.focused != PanelMyPRs {
+		t.Errorf("j on empty panel should not change focus, got %d", m.focused)
+	}
+}
+
+func TestKey_K_WrapsToEmptyOtherPanel(t *testing.T) {
+	// MyPRs has rows, ReviewQueue is empty. k at top of MyPRs should still
+	// wrap to ReviewQueue and call SetCursor(0) safely.
+	myPRs := newCursorStub("myPRs", 2, nil)
+	rq := newCursorStub("reviewQueue", 0, nil)
+
+	m, _ := newTestModel(myPRs, rq, newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+	myPRs.cursor = 0
+
+	m = applyMsg(m, keyRune('k'))
+
+	// Should still wrap to ReviewQueue even though it's empty.
+	if m.focused != PanelReviewQueue {
+		t.Errorf("expected focus on ReviewQueue, got %d", m.focused)
+	}
+}
+
+// ── nextVisiblePanel ──────────────────────────────────────────────────────────
+
+func TestNextVisiblePanel(t *testing.T) {
+	tests := []struct {
+		name           string
+		focused        Panel
+		watchesContent bool
+		want           Panel
+	}{
+		{"MyPRs→RQ (watches invisible)", PanelMyPRs, false, PanelReviewQueue},
+		{"RQ→MyPRs (watches invisible)", PanelReviewQueue, false, PanelMyPRs},
+		{"MyPRs→RQ (watches visible)", PanelMyPRs, true, PanelReviewQueue},
+		{"RQ→Watches (watches visible)", PanelReviewQueue, true, PanelWatches},
+		{"Watches→MyPRs (watches visible)", PanelWatches, true, PanelMyPRs},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := newTestModel(
+				newStub("myPRs", true),
+				newStub("reviewQueue", true),
+				newStub("watches", tt.watchesContent),
+				newStub("detail", false),
+				newStub("cmdBar", false),
+			)
+			m.focused = tt.focused
+			got := m.nextVisiblePanel()
+			if got != tt.want {
+				t.Errorf("nextVisiblePanel() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

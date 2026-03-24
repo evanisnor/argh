@@ -910,3 +910,69 @@ func TestReviewQueuePanel_SelectedPR(t *testing.T) {
 		}
 	})
 }
+
+// ── CursorPosition / SetCursor tests ──────────────────────────────────────────
+
+func TestReviewQueuePanel_CursorPosition(t *testing.T) {
+	reader := newStubPRReader()
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", URL: "u1", Author: "alice", LastActivityAt: t0, CreatedAt: t0},
+		{ID: "pr2", URL: "u2", Author: "bob", LastActivityAt: t1, CreatedAt: t0},
+	}
+	reader.sessionIDs["u1"] = "a"
+	reader.sessionIDs["u2"] = "b"
+	panel := makeReviewPanel(reader, "me")
+
+	if panel.CursorPosition() != 0 {
+		t.Errorf("initial CursorPosition = %d, want 0", panel.CursorPosition())
+	}
+
+	panel.Update(MoveFocusMsg{Down: true})
+	if panel.CursorPosition() != 1 {
+		t.Errorf("after j CursorPosition = %d, want 1", panel.CursorPosition())
+	}
+}
+
+func TestReviewQueuePanel_SetCursor(t *testing.T) {
+	reader := newStubPRReader()
+	reader.prs = []persistence.PullRequest{
+		{ID: "pr1", URL: "u1", Author: "alice", LastActivityAt: t0, CreatedAt: t0},
+		{ID: "pr2", URL: "u2", Author: "bob", LastActivityAt: t1, CreatedAt: t0},
+		{ID: "pr3", URL: "u3", Author: "charlie", LastActivityAt: t2, CreatedAt: t0},
+	}
+	reader.sessionIDs["u1"] = "a"
+	reader.sessionIDs["u2"] = "b"
+	reader.sessionIDs["u3"] = "c"
+	panel := makeReviewPanel(reader, "me")
+
+	tests := []struct {
+		name    string
+		set     int
+		wantPos int
+	}{
+		{"set to 0", 0, 0},
+		{"set to 1", 1, 1},
+		{"set to last", 2, 2},
+		{"negative clamped to 0", -1, 0},
+		{"beyond end clamped", 10, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			panel.SetCursor(tt.set)
+			if panel.CursorPosition() != tt.wantPos {
+				t.Errorf("SetCursor(%d) → CursorPosition() = %d, want %d",
+					tt.set, panel.CursorPosition(), tt.wantPos)
+			}
+		})
+	}
+}
+
+func TestReviewQueuePanel_SetCursor_EmptyPanel(t *testing.T) {
+	reader := newStubPRReader()
+	panel := makeReviewPanel(reader, "me")
+
+	panel.SetCursor(5)
+	if panel.CursorPosition() != 0 {
+		t.Errorf("SetCursor on empty panel: CursorPosition = %d, want 0", panel.CursorPosition())
+	}
+}

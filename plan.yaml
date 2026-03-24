@@ -2007,3 +2007,21 @@ tasks:
       to detail pane. New tests: PgDown/PgUp with detail open assert PRFocusedMsg;
       PgDown with detail closed is no-op; PgDown on Watches and empty panel no-ops.
       100% coverage maintained.
+
+  # ─── Phase 28: Fix Panel Navigation ──────────────────────────────────────────
+
+  - id: 125
+    title: "Tab skips invisible Watches panel; j/k wraps between MyPRs and ReviewQueue"
+    status: done
+    depends_on: [124]
+    description: >
+      Fix two navigation bugs:
+      (1) Tab cycles through invisible Watches panel — replace hardcoded modulo
+      with nextVisiblePanel() helper that skips PanelWatches when it has no content.
+      (2) j/k stops at panel boundaries — add CursorNavigator interface and
+      handlePanelCursorMove() to wrap cursor between MyPRs and ReviewQueue.
+    testing: >
+      Tab-skips-invisible-watches test. j/k wrapping tests: down at bottom of
+      MyPRs wraps to top of ReviewQueue and vice versa. Up at top of ReviewQueue
+      wraps to bottom of MyPRs. Watches excluded from wrapping. Empty target
+      panel handled. 100% coverage maintained.

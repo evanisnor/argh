@@ -179,6 +179,24 @@ func (p *ReviewQueuePanel) buildRQCells(row reviewRow, now time.Time) []string {
 	}
 }
 
+// CursorPosition returns the current cursor index within the panel.
+func (p *ReviewQueuePanel) CursorPosition() int { return p.cursor }
+
+// SetCursor moves the cursor to the given position, clamped to valid bounds.
+func (p *ReviewQueuePanel) SetCursor(pos int) {
+	if len(p.rows) == 0 {
+		p.cursor = 0
+		return
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= len(p.rows) {
+		pos = len(p.rows) - 1
+	}
+	p.cursor = pos
+}
+
 // SelectedPR returns the PullRequest currently under the cursor, or nil when
 // the panel has no rows.
 func (p *ReviewQueuePanel) SelectedPR() *persistence.PullRequest {
