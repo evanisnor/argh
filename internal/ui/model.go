@@ -107,9 +107,9 @@ type PRSelector interface {
 }
 
 // CursorNavigator is the optional interface implemented by panels that support
-// cursor-based navigation with wrapping between panels. Only MyPRsPanel and
-// ReviewQueuePanel implement this; the Watches panel does not participate in
-// cross-panel wrapping.
+// cursor-based navigation with wrapping between panels. MyPRsPanel,
+// ReviewQueuePanel, and WatchesPanel all implement this so that j/k wraps
+// through every visible panel in order.
 type CursorNavigator interface {
 	CursorPosition() int
 	SetCursor(pos int)
@@ -764,84 +764,84 @@ func (m Model) nextVisiblePanel() Panel {
 	return next
 }
 
-// focusedPRSubModel returns the SubModel for the currently focused PR panel.
-// Only called after otherPRPanel confirms the focus is on MyPRs or ReviewQueue.
-func (m Model) focusedPRSubModel() SubModel {
-	if m.focused == PanelMyPRs {
-		return m.myPRs
-	}
-	return m.reviewQueue
-}
-
-// otherPRPanel returns the "other" PR panel when the focused panel is MyPRs
-// or ReviewQueue. Returns -1 when the focused panel is Watches (no wrapping).
-func (m Model) otherPRPanel() Panel {
-	switch m.focused {
-	case PanelMyPRs:
-		return PanelReviewQueue
-	case PanelReviewQueue:
-		return PanelMyPRs
-	default:
-		return -1
-	}
-}
-
 // subModelForPanel returns the SubModel for the given panel.
 func (m Model) subModelForPanel(p Panel) SubModel {
-	if p == PanelMyPRs {
+	switch p {
+	case PanelReviewQueue:
+		return m.reviewQueue
+	case PanelWatches:
+		return m.watches
+	default:
 		return m.myPRs
 	}
-	return m.reviewQueue
 }
 
-// handlePanelCursorMove checks whether j/k should wrap between MyPRs and
-// ReviewQueue. If the focused panel implements CursorNavigator and the cursor
-// is at a boundary, it switches focus to the other PR panel. Otherwise it
-// dispatches a normal MoveFocusMsg.
-func (m Model) handlePanelCursorMove(down bool) (tea.Model, tea.Cmd) {
-	other := m.otherPRPanel()
-	if other < 0 {
-		// Watches panel — no wrapping, just dispatch normally.
-		result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: down})
-		m = result.(Model)
-		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+// visiblePanels returns the ordered list of panels participating in cursor
+// wrapping. Watches is included only when it has content.
+func (m Model) visiblePanels() []Panel {
+	panels := []Panel{PanelMyPRs, PanelReviewQueue}
+	if m.watches.HasContent() {
+		panels = append(panels, PanelWatches)
 	}
+	return panels
+}
 
-	focused := m.focusedPRSubModel()
+// handlePanelCursorMove checks whether j/k should wrap between panels. When
+// the cursor is at the bottom of a panel and moving down, focus wraps to the
+// next visible panel's first row (and vice versa for up). The cycle is:
+// MyPRs → ReviewQueue → Watches → MyPRs (Watches skipped when hidden).
+func (m Model) handlePanelCursorMove(down bool) (tea.Model, tea.Cmd) {
+	focused := m.subModelForPanel(m.focused)
 	nav, isNav := focused.(CursorNavigator)
 	rc, isRC := focused.(RowCounter)
 	if !isNav || !isRC || rc.RowCount() == 0 {
-		// Panel doesn't support wrapping or is empty — dispatch normally.
 		result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: down})
 		m = result.(Model)
 		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 	}
 
+	panels := m.visiblePanels()
+
 	if down && nav.CursorPosition() == rc.RowCount()-1 {
-		// At the bottom — wrap to the other panel's top.
-		otherSub := m.subModelForPanel(other)
-		if otherNav, ok := otherSub.(CursorNavigator); ok {
+		next := m.nextPanelInCycle(panels, true)
+		nextSub := m.subModelForPanel(next)
+		if otherNav, ok := nextSub.(CursorNavigator); ok {
 			otherNav.SetCursor(0)
 		}
-		m.focused = other
+		m.focused = next
 		return m, waitForDBEvent(m.eventCh)
 	}
 
 	if !down && nav.CursorPosition() == 0 {
-		// At the top — wrap to the other panel's bottom.
-		otherSub := m.subModelForPanel(other)
-		otherRC, hasRC := otherSub.(RowCounter)
-		if otherNav, ok := otherSub.(CursorNavigator); ok && hasRC && otherRC.RowCount() > 0 {
-			otherNav.SetCursor(otherRC.RowCount() - 1)
+		prev := m.nextPanelInCycle(panels, false)
+		prevSub := m.subModelForPanel(prev)
+		prevRC, hasRC := prevSub.(RowCounter)
+		if otherNav, ok := prevSub.(CursorNavigator); ok && hasRC && prevRC.RowCount() > 0 {
+			otherNav.SetCursor(prevRC.RowCount() - 1)
 		}
-		m.focused = other
+		m.focused = prev
 		return m, waitForDBEvent(m.eventCh)
 	}
 
-	// Not at a boundary — dispatch normal move.
 	result, cmd := m.dispatchToFocused(MoveFocusMsg{Down: down})
 	m = result.(Model)
 	return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+}
+
+// nextPanelInCycle returns the next (or previous) panel in the ordered cycle,
+// wrapping around.
+func (m Model) nextPanelInCycle(panels []Panel, forward bool) Panel {
+	idx := 0
+	for i, p := range panels {
+		if p == m.focused {
+			idx = i
+			break
+		}
+	}
+	if forward {
+		return panels[(idx+1)%len(panels)]
+	}
+	return panels[(idx-1+len(panels))%len(panels)]
 }
 
 // focusedPRSelector returns the focused panel as a PRSelector if the currently

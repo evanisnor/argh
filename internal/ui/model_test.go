@@ -2814,25 +2814,121 @@ func TestKey_J_MiddleOfPanel_DoesNotWrap(t *testing.T) {
 	}
 }
 
-func TestKey_JK_Watches_NoWrapping(t *testing.T) {
-	watches := newStub("watches", true)
+// ── j/k wrapping through all 3 panels ─────────────────────────────────────────
+
+func TestKey_J_AtBottomOfReviewQueue_WrapsToWatches(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1"}
+	rq := newCursorStub("reviewQueue", 2, pr)
+	watches := newCursorStub("watches", 3, nil)
+
 	m, _ := newTestModel(
-		newStub("myPRs", true),
-		newStub("reviewQueue", true),
-		watches,
-		newStub("detail", false),
-		newStub("cmdBar", false),
+		newCursorStub("myPRs", 2, nil),
+		rq, watches,
+		newStub("detail", false), newStub("cmdBar", false),
 	)
-	m.focused = PanelWatches
+	m.focused = PanelReviewQueue
+	rq.cursor = 1 // at the bottom
 
 	m = applyMsg(m, keyRune('j'))
+
 	if m.focused != PanelWatches {
-		t.Errorf("j on Watches should not change focus, got %d", m.focused)
+		t.Errorf("expected focus on Watches, got %d", m.focused)
 	}
+	wp := m.watches.(*stubCursorPanel)
+	if wp.CursorPosition() != 0 {
+		t.Errorf("expected Watches cursor at 0, got %d", wp.CursorPosition())
+	}
+}
+
+func TestKey_K_AtTopOfWatches_WrapsToReviewQueue(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1"}
+	rq := newCursorStub("reviewQueue", 3, pr)
+	watches := newCursorStub("watches", 2, nil)
+
+	m, _ := newTestModel(
+		newCursorStub("myPRs", 2, nil),
+		rq, watches,
+		newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.focused = PanelWatches
+	watches.cursor = 0
 
 	m = applyMsg(m, keyRune('k'))
+
+	if m.focused != PanelReviewQueue {
+		t.Errorf("expected focus on ReviewQueue, got %d", m.focused)
+	}
+	rqPanel := m.reviewQueue.(*stubCursorPanel)
+	if rqPanel.CursorPosition() != 2 {
+		t.Errorf("expected ReviewQueue cursor at bottom (2), got %d", rqPanel.CursorPosition())
+	}
+}
+
+func TestKey_J_AtBottomOfWatches_WrapsToMyPRs(t *testing.T) {
+	myPRs := newCursorStub("myPRs", 2, nil)
+	watches := newCursorStub("watches", 2, nil)
+
+	m, _ := newTestModel(
+		myPRs,
+		newCursorStub("reviewQueue", 2, nil),
+		watches,
+		newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.focused = PanelWatches
+	watches.cursor = 1 // at the bottom
+
+	m = applyMsg(m, keyRune('j'))
+
+	if m.focused != PanelMyPRs {
+		t.Errorf("expected focus on MyPRs, got %d", m.focused)
+	}
+	mp := m.myPRs.(*stubCursorPanel)
+	if mp.CursorPosition() != 0 {
+		t.Errorf("expected MyPRs cursor at 0, got %d", mp.CursorPosition())
+	}
+}
+
+func TestKey_K_AtTopOfMyPRs_WrapsToWatches(t *testing.T) {
+	myPRs := newCursorStub("myPRs", 2, nil)
+	watches := newCursorStub("watches", 3, nil)
+
+	m, _ := newTestModel(
+		myPRs,
+		newCursorStub("reviewQueue", 2, nil),
+		watches,
+		newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.focused = PanelMyPRs
+	myPRs.cursor = 0
+
+	m = applyMsg(m, keyRune('k'))
+
 	if m.focused != PanelWatches {
-		t.Errorf("k on Watches should not change focus, got %d", m.focused)
+		t.Errorf("expected focus on Watches, got %d", m.focused)
+	}
+	wp := m.watches.(*stubCursorPanel)
+	if wp.CursorPosition() != 2 {
+		t.Errorf("expected Watches cursor at bottom (2), got %d", wp.CursorPosition())
+	}
+}
+
+func TestKey_J_WatchesHidden_SkipsWatches(t *testing.T) {
+	pr := &persistence.PullRequest{ID: "pr1"}
+	myPRs := newCursorStub("myPRs", 2, nil)
+	rq := newCursorStub("reviewQueue", 2, pr)
+
+	m, _ := newTestModel(
+		myPRs, rq,
+		newStub("watches", false), // hidden
+		newStub("detail", false), newStub("cmdBar", false),
+	)
+	m.focused = PanelReviewQueue
+	rq.cursor = 1 // at the bottom
+
+	m = applyMsg(m, keyRune('j'))
+
+	if m.focused != PanelMyPRs {
+		t.Errorf("expected focus on MyPRs (skipping hidden Watches), got %d", m.focused)
 	}
 }
 

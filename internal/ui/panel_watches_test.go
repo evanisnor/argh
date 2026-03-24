@@ -15,6 +15,8 @@ import (
 type stubWatchReader struct {
 	watches        []persistence.Watch
 	listWatchesErr error
+	sessionIDs     map[string]string           // prURL → sessionID
+	pullRequests   map[string]persistence.PullRequest // "repo/number" → PR
 }
 
 func (s *stubWatchReader) ListWatches() ([]persistence.Watch, error) {
@@ -22,6 +24,25 @@ func (s *stubWatchReader) ListWatches() ([]persistence.Watch, error) {
 		return nil, s.listWatchesErr
 	}
 	return s.watches, nil
+}
+
+func (s *stubWatchReader) GetSessionID(prURL string) (string, error) {
+	if s.sessionIDs != nil {
+		if sid, ok := s.sessionIDs[prURL]; ok {
+			return sid, nil
+		}
+	}
+	return "", fmt.Errorf("not found")
+}
+
+func (s *stubWatchReader) GetPullRequest(repo string, number int) (persistence.PullRequest, error) {
+	if s.pullRequests != nil {
+		key := fmt.Sprintf("%s/%d", repo, number)
+		if pr, ok := s.pullRequests[key]; ok {
+			return pr, nil
+		}
+	}
+	return persistence.PullRequest{}, fmt.Errorf("not found")
 }
 
 // stubWatchCanceller is a test double for WatchCanceller.
@@ -44,6 +65,7 @@ func makeWatchesPanel(reader *stubWatchReader) *WatchesPanel {
 func makeWatch(id, repo string, prNumber int, status string) persistence.Watch {
 	return persistence.Watch{
 		ID:          id,
+		PRURL:       "https://github.com/" + repo + "/pull/" + fmt.Sprint(prNumber),
 		Repo:        repo,
 		PRNumber:    prNumber,
 		TriggerExpr: "on:ci-pass",
@@ -68,54 +90,87 @@ func TestWatchesPanel_NoWatches(t *testing.T) {
 	if !strings.Contains(view, "no active watches") {
 		t.Errorf("expected empty-state message in view; got:\n%s", view)
 	}
-	if !strings.Contains(view, "[0 active]") {
-		t.Errorf("expected '[0 active]' badge; got:\n%s", view)
-	}
 }
 
-// TestWatchesPanel_HasContent verifies HasContent reflects the presence of watches.
+// TestWatchesPanel_HasContent verifies HasContent reflects the presence of active watches.
 func TestWatchesPanel_HasContent(t *testing.T) {
-	t.Run("with watches", func(t *testing.T) {
+	t.Run("with active watches", func(t *testing.T) {
 		reader := &stubWatchReader{
 			watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "waiting")},
 		}
 		panel := makeWatchesPanel(reader)
 		if !panel.HasContent() {
-			t.Error("expected HasContent() == true with a watch")
+			t.Error("expected HasContent() == true with an active watch")
 		}
 	})
 
-	t.Run("fired watch still shows as content", func(t *testing.T) {
+	t.Run("fired watch is not content", func(t *testing.T) {
 		reader := &stubWatchReader{
 			watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "fired")},
 		}
 		panel := makeWatchesPanel(reader)
-		if !panel.HasContent() {
-			t.Error("expected HasContent() == true even for fired watch")
+		if panel.HasContent() {
+			t.Error("expected HasContent() == false for only fired watch")
+		}
+	})
+
+	t.Run("failed watch is not content", func(t *testing.T) {
+		reader := &stubWatchReader{
+			watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "failed")},
+		}
+		panel := makeWatchesPanel(reader)
+		if panel.HasContent() {
+			t.Error("expected HasContent() == false for only failed watch")
 		}
 	})
 }
 
-// TestWatchesPanel_StatusSymbols verifies each status value renders the correct symbol.
-func TestWatchesPanel_StatusSymbols(t *testing.T) {
-	tests := []struct {
-		status     string
-		wantSymbol string
-	}{
-		{"waiting", "⟳"},
-		{"scheduled", "⟳"},
-		{"fired", "✓"},
-		{"failed", "✗"},
+// TestWatchesPanel_OnlyActiveWatchesShown verifies that fired and failed watches
+// are filtered out — only waiting and scheduled watches appear.
+func TestWatchesPanel_OnlyActiveWatchesShown(t *testing.T) {
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{
+			makeWatch("w1", "repo/a", 1, "waiting"),
+			makeWatch("w2", "repo/b", 2, "fired"),
+			makeWatch("w3", "repo/c", 3, "failed"),
+			makeWatch("w4", "repo/d", 4, "scheduled"),
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.status, func(t *testing.T) {
+	panel := makeWatchesPanel(reader)
+
+	if panel.RowCount() != 2 {
+		t.Errorf("expected 2 active rows, got %d", panel.RowCount())
+	}
+
+	view := panel.View()
+	if !strings.Contains(view, "repo/a") {
+		t.Errorf("expected waiting watch in view; got:\n%s", view)
+	}
+	if !strings.Contains(view, "repo/d") {
+		t.Errorf("expected scheduled watch in view; got:\n%s", view)
+	}
+	if strings.Contains(view, "repo/b") {
+		t.Errorf("fired watch should NOT appear in view; got:\n%s", view)
+	}
+	if strings.Contains(view, "repo/c") {
+		t.Errorf("failed watch should NOT appear in view; got:\n%s", view)
+	}
+}
+
+// TestWatchesPanel_ActiveStatuses verifies both active statuses are shown.
+func TestWatchesPanel_ActiveStatuses(t *testing.T) {
+	for _, status := range []string{"waiting", "scheduled"} {
+		t.Run(status, func(t *testing.T) {
 			reader := &stubWatchReader{
-				watches: []persistence.Watch{makeWatch("w1", "repo/a", 42, tt.status)},
+				watches: []persistence.Watch{makeWatch("w1", "repo/a", 42, status)},
 			}
 			panel := makeWatchesPanel(reader)
+			if panel.RowCount() != 1 {
+				t.Errorf("status %q: expected 1 row, got %d", status, panel.RowCount())
+			}
 			view := panel.View()
-			if !strings.Contains(view, tt.wantSymbol) {
-				t.Errorf("status %q: expected symbol %q in view; got:\n%s", tt.status, tt.wantSymbol, view)
+			if !strings.Contains(view, "repo/a") {
+				t.Errorf("status %q: expected repo in view; got:\n%s", status, view)
 			}
 		})
 	}
@@ -143,13 +198,12 @@ func TestWatchStatusDisplay(t *testing.T) {
 	}
 }
 
-// TestWatchesPanel_BadgeCount verifies the "[N active]" badge reflects only
-// waiting and scheduled watches, not fired or failed ones.
-func TestWatchesPanel_BadgeCount(t *testing.T) {
+// TestWatchesPanel_RowCount verifies RowCount returns the number of active watches.
+func TestWatchesPanel_RowCount(t *testing.T) {
 	tests := []struct {
-		name      string
-		watches   []persistence.Watch
-		wantBadge string
+		name    string
+		watches []persistence.Watch
+		want    int
 	}{
 		{
 			"all active",
@@ -157,7 +211,7 @@ func TestWatchesPanel_BadgeCount(t *testing.T) {
 				makeWatch("w1", "r", 1, "waiting"),
 				makeWatch("w2", "r", 2, "scheduled"),
 			},
-			"[2 active]",
+			2,
 		},
 		{
 			"mixed: 1 active 1 fired",
@@ -165,7 +219,7 @@ func TestWatchesPanel_BadgeCount(t *testing.T) {
 				makeWatch("w1", "r", 1, "waiting"),
 				makeWatch("w2", "r", 2, "fired"),
 			},
-			"[1 active]",
+			1,
 		},
 		{
 			"all fired or failed",
@@ -173,21 +227,20 @@ func TestWatchesPanel_BadgeCount(t *testing.T) {
 				makeWatch("w1", "r", 1, "fired"),
 				makeWatch("w2", "r", 2, "failed"),
 			},
-			"[0 active]",
+			0,
 		},
 		{
 			"zero watches",
 			nil,
-			"[0 active]",
+			0,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := &stubWatchReader{watches: tt.watches}
 			panel := makeWatchesPanel(reader)
-			view := panel.View()
-			if !strings.Contains(view, tt.wantBadge) {
-				t.Errorf("expected %q in view; got:\n%s", tt.wantBadge, view)
+			if got := panel.RowCount(); got != tt.want {
+				t.Errorf("RowCount() = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -200,24 +253,16 @@ func TestWatchesPanel_WatchFiredFlash(t *testing.T) {
 	reader := &stubWatchReader{watches: []persistence.Watch{w}}
 	panel := makeWatchesPanel(reader)
 
-	// Flash state should be empty before the event.
 	if panel.flashing["watch-id-123"] {
 		t.Error("expected no flash before WATCH_FIRED event")
 	}
 
-	// Send a WATCH_FIRED event carrying the watch.
 	msg := DBEventMsg{Event: eventbus.Event{Type: eventbus.WatchFired, After: w}}
 	updated, _ := panel.Update(msg)
 	updatedPanel := updated.(*WatchesPanel)
 
 	if !updatedPanel.flashing["watch-id-123"] {
 		t.Error("expected watch-id-123 to be flashing after WATCH_FIRED")
-	}
-
-	// View must still contain the watch row.
-	view := updatedPanel.View()
-	if !strings.Contains(view, "repo/a") {
-		t.Errorf("expected watch row in view after flash; got:\n%s", view)
 	}
 }
 
@@ -262,26 +307,22 @@ func TestWatchesPanel_MoveFocus(t *testing.T) {
 	}
 	panel := makeWatchesPanel(reader)
 
-	// Move down twice.
 	panel.Update(MoveFocusMsg{Down: true})
 	panel.Update(MoveFocusMsg{Down: true})
 	if panel.cursor != 2 {
 		t.Errorf("expected cursor=2, got %d", panel.cursor)
 	}
 
-	// Move down past end: stays at 2.
 	panel.Update(MoveFocusMsg{Down: true})
 	if panel.cursor != 2 {
 		t.Errorf("expected cursor to stay at 2, got %d", panel.cursor)
 	}
 
-	// Move up once.
 	panel.Update(MoveFocusMsg{Down: false})
 	if panel.cursor != 1 {
 		t.Errorf("expected cursor=1, got %d", panel.cursor)
 	}
 
-	// Move up past start: stays at 0.
 	panel.Update(MoveFocusMsg{Down: false})
 	panel.Update(MoveFocusMsg{Down: false})
 	if panel.cursor != 0 {
@@ -394,7 +435,6 @@ func TestWatchesPanel_IDTruncation(t *testing.T) {
 	panel := makeWatchesPanel(reader)
 	view := panel.View()
 
-	// Truncated prefix must appear; full ID must not.
 	if !strings.Contains(view, "abcdef12") {
 		t.Errorf("expected truncated ID 'abcdef12' in view; got:\n%s", view)
 	}
@@ -417,12 +457,12 @@ func TestWatchesPanel_ShortID(t *testing.T) {
 	}
 }
 
-// TestWatchesPanel_MultipleRowsRendered verifies multiple watch rows appear.
+// TestWatchesPanel_MultipleRowsRendered verifies multiple active watch rows appear.
 func TestWatchesPanel_MultipleRowsRendered(t *testing.T) {
 	reader := &stubWatchReader{
 		watches: []persistence.Watch{
 			makeWatch("w1", "repo/a", 1, "waiting"),
-			makeWatch("w2", "repo/b", 2, "fired"),
+			makeWatch("w2", "repo/b", 2, "waiting"),
 		},
 	}
 	panel := makeWatchesPanel(reader)
@@ -456,7 +496,7 @@ func TestWatchesPanel_CursorClamping(t *testing.T) {
 
 	// Shrink list to 1 and trigger refresh via WATCH_FIRED.
 	reader.watches = reader.watches[:1]
-	w := makeWatch("w1", "r", 1, "fired")
+	w := makeWatch("w1", "r", 1, "waiting")
 	panel.Update(DBEventMsg{Event: eventbus.Event{Type: eventbus.WatchFired, After: w}})
 
 	if panel.cursor != 0 {
@@ -473,48 +513,13 @@ func TestWatchesPanel_FocusedRowHighlight(t *testing.T) {
 	panel.SetFocused(true)
 	view := panel.View()
 
-	// The focused row (cursor=0) must appear in the view.
 	if !strings.Contains(view, "repo/focused") {
 		t.Errorf("expected focused row in view; got:\n%s", view)
 	}
 }
 
-// TestWatchesPanel_FailedStyleApplied verifies the failed-status style branch is
-// exercised (red foreground applied to "failed" watch rows).
-func TestWatchesPanel_FailedStyleApplied(t *testing.T) {
-	reader := &stubWatchReader{
-		watches: []persistence.Watch{makeWatch("w1", "repo/fail", 1, "failed")},
-	}
-	panel := makeWatchesPanel(reader)
-	view := panel.View()
-
-	if !strings.Contains(view, "repo/fail") {
-		t.Errorf("expected failed watch row in view; got:\n%s", view)
-	}
-	if !strings.Contains(view, "✗") {
-		t.Errorf("expected '✗' for failed watch; got:\n%s", view)
-	}
-}
-
-// TestWatchesPanel_FiredStyleApplied verifies the fired-status style branch (faint)
-// is exercised.
-func TestWatchesPanel_FiredStyleApplied(t *testing.T) {
-	reader := &stubWatchReader{
-		watches: []persistence.Watch{makeWatch("w1", "repo/fired", 1, "fired")},
-	}
-	panel := makeWatchesPanel(reader)
-	view := panel.View()
-
-	if !strings.Contains(view, "repo/fired") {
-		t.Errorf("expected fired watch row in view; got:\n%s", view)
-	}
-	if !strings.Contains(view, "✓") {
-		t.Errorf("expected '✓' for fired watch; got:\n%s", view)
-	}
-}
-
 // TestWatchesPanel_FlashRendering verifies that a flashing row is rendered with
-// bold style (the flash code path in renderRow is exercised).
+// bold style (the flash code path in the StyleFunc is exercised).
 func TestWatchesPanel_FlashRendering(t *testing.T) {
 	w := makeWatch("w1", "repo/flash", 1, "waiting")
 	reader := &stubWatchReader{watches: []persistence.Watch{w}}
@@ -556,22 +561,209 @@ func TestWatchesPanel_ResizeMsg(t *testing.T) {
 	}
 }
 
-// TestWatchesPanel_TriggerTruncation verifies that a very long trigger expression
-// is truncated when a narrow width is set via ResizeMsg.
-func TestWatchesPanel_TriggerTruncation(t *testing.T) {
-	longTrigger := strings.Repeat("z", 200)
+// TestWatchesPanel_ViewWithWidth verifies the table renders with a width constraint.
+func TestWatchesPanel_ViewWithWidth(t *testing.T) {
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "waiting")},
+	}
+	panel := makeWatchesPanel(reader)
+	panel.Update(ResizeMsg{Width: 80, Height: 20})
+	view := panel.View()
+	if !strings.Contains(view, "repo/a") {
+		t.Errorf("expected watch data in width-constrained view; got:\n%s", view)
+	}
+}
+
+// ── Session ID ───────────────────────────────────────────────────────────────
+
+// TestWatchesPanel_SessionIDDisplayed verifies that session IDs are looked up
+// and displayed in the table.
+func TestWatchesPanel_SessionIDDisplayed(t *testing.T) {
+	w := makeWatch("w1", "repo/a", 1, "waiting")
+	reader := &stubWatchReader{
+		watches:    []persistence.Watch{w},
+		sessionIDs: map[string]string{w.PRURL: "3"},
+	}
+	panel := makeWatchesPanel(reader)
+	view := panel.View()
+
+	if !strings.Contains(view, "3") {
+		t.Errorf("expected session ID '3' in view; got:\n%s", view)
+	}
+}
+
+// TestWatchesPanel_SessionIDMissing verifies that a missing session ID shows "-".
+func TestWatchesPanel_SessionIDMissing(t *testing.T) {
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "waiting")},
+	}
+	panel := makeWatchesPanel(reader)
+	view := panel.View()
+
+	if !strings.Contains(view, "-") {
+		t.Errorf("expected '-' for missing session ID in view; got:\n%s", view)
+	}
+}
+
+// ── CursorNavigator ──────────────────────────────────────────────────────────
+
+// TestWatchesPanel_CursorNavigator verifies CursorPosition and SetCursor.
+func TestWatchesPanel_CursorNavigator(t *testing.T) {
 	reader := &stubWatchReader{
 		watches: []persistence.Watch{
-			{ID: "w1", Repo: "repo", PRNumber: 42,
-				TriggerExpr: longTrigger, ActionExpr: "merge", Status: "waiting"},
+			makeWatch("w1", "r", 1, "waiting"),
+			makeWatch("w2", "r", 2, "waiting"),
+			makeWatch("w3", "r", 3, "waiting"),
 		},
 	}
-	panel := NewWatchesPanel(reader, nil)
-	panel.Update(ResizeMsg{Width: 60, Height: 10})
+	panel := makeWatchesPanel(reader)
+
+	if panel.CursorPosition() != 0 {
+		t.Errorf("initial CursorPosition() = %d, want 0", panel.CursorPosition())
+	}
+
+	panel.SetCursor(2)
+	if panel.CursorPosition() != 2 {
+		t.Errorf("CursorPosition() = %d after SetCursor(2), want 2", panel.CursorPosition())
+	}
+
+	panel.SetCursor(10) // beyond bounds — clamped
+	if panel.CursorPosition() != 2 {
+		t.Errorf("CursorPosition() = %d after SetCursor(10), want 2 (clamped)", panel.CursorPosition())
+	}
+
+	panel.SetCursor(-1) // below bounds — clamped
+	if panel.CursorPosition() != 0 {
+		t.Errorf("CursorPosition() = %d after SetCursor(-1), want 0 (clamped)", panel.CursorPosition())
+	}
+}
+
+// TestWatchesPanel_SetCursor_EmptyPanel verifies SetCursor on an empty panel.
+func TestWatchesPanel_SetCursor_EmptyPanel(t *testing.T) {
+	panel := makeWatchesPanel(&stubWatchReader{})
+	panel.SetCursor(5)
+	if panel.CursorPosition() != 0 {
+		t.Errorf("CursorPosition() = %d on empty panel after SetCursor(5), want 0", panel.CursorPosition())
+	}
+}
+
+// ── Table rendering ──────────────────────────────────────────────────────────
+
+// TestWatchesPanel_TableContainsHeaders verifies the table includes column headers.
+func TestWatchesPanel_TableContainsHeaders(t *testing.T) {
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "waiting")},
+	}
+	panel := makeWatchesPanel(reader)
 	view := panel.View()
-	for _, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, longTrigger) {
-			t.Errorf("long trigger not truncated in view line: %q", line)
+
+	for _, hdr := range []string{"ID", "REPO", "TITLE", "TRIGGER", "ACTION"} {
+		if !strings.Contains(view, hdr) {
+			t.Errorf("expected header %q in view; got:\n%s", hdr, view)
 		}
+	}
+}
+
+// TestWatchesPanel_TableContainsCellData verifies that cell data appears in the table.
+func TestWatchesPanel_TableContainsCellData(t *testing.T) {
+	w := persistence.Watch{
+		ID: "abcd1234", PRURL: "url", Repo: "org/repo", PRNumber: 42,
+		TriggerExpr: "on:ci-pass", ActionExpr: "merge", Status: "waiting",
+	}
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{w},
+		pullRequests: map[string]persistence.PullRequest{
+			"org/repo/42": {Title: "Fix the thing", CIState: "passing"},
+		},
+	}
+	panel := makeWatchesPanel(reader)
+	view := panel.View()
+
+	for _, want := range []string{"abcd1234", "org/repo", "#42", "Fix the thing", "on:ci-pass", "merge"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected %q in table view; got:\n%s", want, view)
+		}
+	}
+}
+
+// TestWatchesPanel_PRTitleDisplayed verifies that the PR title appears in the table.
+func TestWatchesPanel_PRTitleDisplayed(t *testing.T) {
+	w := makeWatch("w1", "repo/a", 1, "waiting")
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{w},
+		pullRequests: map[string]persistence.PullRequest{
+			"repo/a/1": {Title: "Add cool feature"},
+		},
+	}
+	panel := makeWatchesPanel(reader)
+	view := panel.View()
+
+	if !strings.Contains(view, "Add cool feature") {
+		t.Errorf("expected PR title in view; got:\n%s", view)
+	}
+}
+
+// TestWatchesPanel_PRNotFound_EmptyTitle verifies a missing PR shows empty title.
+func TestWatchesPanel_PRNotFound_EmptyTitle(t *testing.T) {
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{makeWatch("w1", "repo/a", 1, "waiting")},
+	}
+	panel := makeWatchesPanel(reader)
+	view := panel.View()
+
+	// Should still render without crashing — just no title text.
+	if !strings.Contains(view, "repo/a") {
+		t.Errorf("expected repo in view; got:\n%s", view)
+	}
+}
+
+// TestWatchesPanel_CIColor verifies that rows are colored by CI state.
+func TestWatchesPanel_CIColor(t *testing.T) {
+	tests := []struct {
+		name    string
+		ciState string
+	}{
+		{"passing", "passing"},
+		{"success", "success"},
+		{"running", "running"},
+		{"in_progress", "in_progress"},
+		{"pending", "pending"},
+		{"failing", "failing"},
+		{"failure", "failure"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := makeWatch("w1", "repo/a", 1, "waiting")
+			reader := &stubWatchReader{
+				watches: []persistence.Watch{w},
+				pullRequests: map[string]persistence.PullRequest{
+					"repo/a/1": {Title: "PR", CIState: tt.ciState},
+				},
+			}
+			panel := makeWatchesPanel(reader)
+			view := panel.View()
+			// Exercises the color branch — row must still render.
+			if !strings.Contains(view, "repo/a") {
+				t.Errorf("expected watch data in view for CI state %q; got:\n%s", tt.ciState, view)
+			}
+		})
+	}
+}
+
+// TestWatchesPanel_CIIndicatorDisplayed verifies the CI indicator column appears.
+func TestWatchesPanel_CIIndicatorDisplayed(t *testing.T) {
+	w := makeWatch("w1", "repo/a", 1, "waiting")
+	reader := &stubWatchReader{
+		watches: []persistence.Watch{w},
+		pullRequests: map[string]persistence.PullRequest{
+			"repo/a/1": {Title: "PR", CIState: "passing"},
+		},
+	}
+	panel := makeWatchesPanel(reader)
+	view := panel.View()
+
+	// The header should include the CI column.
+	if !strings.Contains(view, "⚙") {
+		t.Errorf("expected CI header '⚙' in view; got:\n%s", view)
 	}
 }
