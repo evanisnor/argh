@@ -109,7 +109,7 @@ func (p *MyPRsPanel) RowCount() int { return len(p.rows) }
 var prHeaders = []string{"", "", "REPO", "#", "TITLE", "●", "⚙", "✓✗", "💬", "⏱"}
 
 // prColWidths defines fixed column widths; index 4 (title) is 0 = flex.
-var prColWidths = []int{1, 2, 14, 5, 0, 17, 2, 5, 2, 3}
+var prColWidths = []int{1, 1, 14, 5, 0, 17, 2, 5, 2, 3}
 
 // prBaseStyle returns the base layout style (width + alignment) for a column.
 func prBaseStyle(widths []int, col int) lipgloss.Style {
@@ -209,7 +209,7 @@ func (p *MyPRsPanel) buildPRCells(row prRow, now time.Time) []string {
 	}
 	watchIcon := " "
 	if row.hasWatches {
-		watchIcon = "👁"
+		watchIcon = "⦿"
 	}
 	title := row.pr.Title
 	return []string{

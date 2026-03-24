@@ -146,7 +146,7 @@ func TestMyPRsPanel_FailingCIHighlight(t *testing.T) {
 	}
 }
 
-// TestMyPRsPanel_WatchIcon verifies the 👁 icon is present when the PR has
+// TestMyPRsPanel_WatchIcon verifies the ⦿ icon is present when the PR has
 // active watches, and absent when it does not.
 func TestMyPRsPanel_WatchIcon(t *testing.T) {
 	t.Run("with active watch", func(t *testing.T) {
@@ -164,8 +164,8 @@ func TestMyPRsPanel_WatchIcon(t *testing.T) {
 		panel := makePanel(reader)
 		view := panel.View()
 
-		if !strings.Contains(view, "👁") {
-			t.Errorf("expected 👁 icon when watch is active; view:\n%s", view)
+		if !strings.Contains(view, "⦿") {
+			t.Errorf("expected ⦿ icon when watch is active; view:\n%s", view)
 		}
 	})
 
@@ -182,8 +182,8 @@ func TestMyPRsPanel_WatchIcon(t *testing.T) {
 		panel := makePanel(reader)
 		view := panel.View()
 
-		if strings.Contains(view, "👁") {
-			t.Errorf("did not expect 👁 icon when no active watch; view:\n%s", view)
+		if strings.Contains(view, "⦿") {
+			t.Errorf("did not expect ⦿ icon when no active watch; view:\n%s", view)
 		}
 	})
 
@@ -202,8 +202,8 @@ func TestMyPRsPanel_WatchIcon(t *testing.T) {
 		panel := makePanel(reader)
 		view := panel.View()
 
-		if strings.Contains(view, "👁") {
-			t.Errorf("did not expect 👁 icon for fired watch; view:\n%s", view)
+		if strings.Contains(view, "⦿") {
+			t.Errorf("did not expect ⦿ icon for fired watch; view:\n%s", view)
 		}
 	})
 
@@ -222,8 +222,8 @@ func TestMyPRsPanel_WatchIcon(t *testing.T) {
 		panel := makePanel(reader)
 		view := panel.View()
 
-		if !strings.Contains(view, "👁") {
-			t.Errorf("expected 👁 icon for scheduled watch; view:\n%s", view)
+		if !strings.Contains(view, "⦿") {
+			t.Errorf("expected ⦿ icon for scheduled watch; view:\n%s", view)
 		}
 	})
 }
@@ -853,7 +853,7 @@ func TestTruncateTitle(t *testing.T) {
 		{"maxTitle zero", "hi", 5, 5, ""},
 		{"negative maxTitle", "hi", 3, 5, ""},
 		{"unicode title", "αβγδεζηθι", 12, 4, "αβγδεζη…"},
-		{"emoji title", "👁fix: repair the thing", 12, 0, "👁fix: repai…"},
+		{"emoji title", "⦿fix: repair the thing", 12, 0, "⦿fix: repai…"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
