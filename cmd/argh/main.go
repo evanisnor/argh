@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -225,22 +224,10 @@ var productionDeps = func() tuiDeps {
 	}
 }
 
-// bgOpenSwift is a small Swift program that opens a URL via NSWorkspace with
-// activates=false, which prevents macOS from switching Spaces to the browser.
-const bgOpenSwift = `import AppKit
-let config = NSWorkspace.OpenConfiguration()
-config.activates = false
-let url = URL(string: CommandLine.arguments[1])!
-let sem = DispatchSemaphore(value: 0)
-NSWorkspace.shared.open(url, configuration: config) { _, _ in sem.signal() }
-sem.wait()`
-
 // execOpen is the function used to open a URL via the system browser.
 // It is a variable so tests can replace it without launching Finder.
 var execOpen = func(url string) error {
-	cmd := exec.Command("swift", "-", url)
-	cmd.Stdin = strings.NewReader(bgOpenSwift)
-	return cmd.Run()
+	return exec.Command("open", "-g", url).Run()
 }
 
 // osBrowserOpener opens a URL using the macOS open(1) command.
