@@ -107,7 +107,37 @@ func (s *stubPRSelector) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 
 func (s *stubPRSelector) SelectedPR() *persistence.PullRequest { return s.pr }
 
+// stubBrowserOpener records the URL passed to Open.
+type stubBrowserOpener struct {
+	openedURL string
+	openErr   error
+}
 
+func (s *stubBrowserOpener) Open(url string) error {
+	s.openedURL = url
+	return s.openErr
+}
+
+// executeBatchCmd recursively executes a tea.Cmd looking for the first
+// non-nil tea.Msg that is a CommandResultMsg or DBEventMsg. It handles
+// tea.BatchMsg by iterating inner commands.
+func executeBatchCmd(cmd tea.Cmd) tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if result := executeBatchCmd(tea.Cmd(c)); result != nil {
+				if _, isResult := result.(CommandResultMsg); isResult {
+					return result
+				}
+			}
+		}
+		return nil
+	}
+	return msg
+}
 
 // plainTheme returns a zero-decoration theme so View() output is easy to assert
 // on without lipgloss escape codes.
@@ -1595,18 +1625,88 @@ func TestKey_Esc_NoOp(t *testing.T) {
 	}
 }
 
-// TestKey_O_SendsOpenPRToFocusedPanel verifies o dispatches OpenPRMsg to the
-// focused panel.
-func TestKey_O_SendsOpenPRToFocusedPanel(t *testing.T) {
-	myPRs := newStub("myPRs", true)
+// TestKey_O_OpensPRInBrowser verifies o calls BrowserOpener.Open with the
+// selected PR's URL and produces a status message.
+func TestKey_O_OpensPRInBrowser(t *testing.T) {
+	pr := &persistence.PullRequest{URL: "https://github.com/org/repo/pull/42"}
+	myPRs := newSelectorStub("myPRs", pr)
 	m, _ := newTestModel(myPRs, newStub("reviewQueue", true),
 		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
 	m.focused = PanelMyPRs
 
+	browser := &stubBrowserOpener{}
+	m.browser = browser
+
+	updated, cmd := m.Update(keyRune('o'))
+	m = updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd from 'o' key")
+	}
+	// Execute the batched commands to find the CommandResultMsg.
+	msg := executeBatchCmd(cmd)
+	if msg == nil {
+		t.Fatal("expected CommandResultMsg from cmd")
+	}
+	result, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if result.Err != nil {
+		t.Errorf("unexpected error: %v", result.Err)
+	}
+	if result.Status != "opened https://github.com/org/repo/pull/42" {
+		t.Errorf("unexpected status: %s", result.Status)
+	}
+	if browser.openedURL != pr.URL {
+		t.Errorf("browser.Open called with %q, want %q", browser.openedURL, pr.URL)
+	}
+}
+
+// TestKey_O_NoPR_NoOp verifies o is a no-op when no PR is selected.
+func TestKey_O_NoPR_NoOp(t *testing.T) {
+	myPRs := newSelectorStub("myPRs", nil)
+	m, _ := newTestModel(myPRs, newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+	m.browser = &stubBrowserOpener{}
+
 	m = applyMsg(m, keyRune('o'))
 
-	if _, ok := m.myPRs.(*stubSubModel).lastMsg.(OpenPRMsg); !ok {
-		t.Errorf("myPRs should receive OpenPRMsg, got %T", m.myPRs.(*stubSubModel).lastMsg)
+	if m.statusText != "" {
+		t.Errorf("expected empty status text, got %q", m.statusText)
+	}
+}
+
+// TestKey_O_NoBrowser_SetsErrorStatus verifies o sets an error status when
+// no browser opener is configured.
+func TestKey_O_NoBrowser_SetsErrorStatus(t *testing.T) {
+	pr := &persistence.PullRequest{URL: "https://github.com/org/repo/pull/1"}
+	myPRs := newSelectorStub("myPRs", pr)
+	m, _ := newTestModel(myPRs, newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+	// m.browser intentionally nil
+
+	m = applyMsg(m, keyRune('o'))
+
+	if m.statusText != "error: no browser opener configured" {
+		t.Errorf("unexpected status text: %q", m.statusText)
+	}
+}
+
+// TestKey_O_WatchesPanel_NoOp verifies o is a no-op when Watches panel is focused
+// (it does not implement PRSelector).
+func TestKey_O_WatchesPanel_NoOp(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", true), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelWatches
+	m.browser = &stubBrowserOpener{}
+
+	m = applyMsg(m, keyRune('o'))
+
+	if m.statusText != "" {
+		t.Errorf("expected empty status text, got %q", m.statusText)
 	}
 }
 
@@ -1945,6 +2045,52 @@ func TestToggleDNDMsg_TogglesHeaderIndicator(t *testing.T) {
 }
 
 // ── ReviewSuggestionsMsg ──────────────────────────────────────────────────────
+
+// ── WithBrowser ───────────────────────────────────────────────────────────────
+
+func TestModel_WithBrowser_SetsBrowser(t *testing.T) {
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		newStub("cmdBar", false),
+	)
+	browser := &stubBrowserOpener{}
+	m2 := m.WithBrowser(browser)
+	if m2.browser != browser {
+		t.Error("WithBrowser: browser not set on returned model")
+	}
+	if m.browser != nil {
+		t.Error("WithBrowser: original model browser should remain nil")
+	}
+}
+
+// TestKey_O_BrowserError_SetsErrorStatus verifies o produces an error status
+// when the browser Open call fails.
+func TestKey_O_BrowserError_SetsErrorStatus(t *testing.T) {
+	pr := &persistence.PullRequest{URL: "https://github.com/org/repo/pull/7"}
+	myPRs := newSelectorStub("myPRs", pr)
+	m, _ := newTestModel(myPRs, newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelMyPRs
+	m.browser = &stubBrowserOpener{openErr: fmt.Errorf("cannot open")}
+
+	updated, cmd := m.Update(keyRune('o'))
+	m = updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd from 'o' key")
+	}
+	msg := executeBatchCmd(cmd)
+	result, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if result.Err == nil {
+		t.Error("expected error in CommandResultMsg")
+	}
+}
 
 // ── WithDNDToggler ────────────────────────────────────────────────────────────
 

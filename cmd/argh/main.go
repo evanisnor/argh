@@ -440,6 +440,7 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 
 	model := ui.New(version, creds.Login, bus,
 		myPRsPanel, reviewQueuePanel, watchesPanel, detailPane, commandBar).
+		WithBrowser(&osBrowserOpener{}).
 		WithDNDToggler(dnd)
 
 	// ── Launch background goroutines ─────────────────────────────────────────

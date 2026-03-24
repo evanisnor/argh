@@ -40,9 +40,6 @@ type FocusCommandBarMsg struct{}
 // BlurCommandBarMsg is sent to the command bar when the user presses Esc.
 type BlurCommandBarMsg struct{}
 
-// OpenPRMsg is sent to the focused panel when the user presses o.
-type OpenPRMsg struct{}
-
 // ShowDiffMsg is sent to the focused panel when the user presses d.
 type ShowDiffMsg struct{}
 
@@ -197,7 +194,8 @@ type Model struct {
 	eventCh           chan eventbus.Event
 	unsubscribe       func()
 	theme             Theme
-	dndToggler        DNDToggler    // optional; nil = no DND control
+	browser           BrowserOpener  // optional; nil = browser not available
+	dndToggler        DNDToggler     // optional; nil = no DND control
 	detailReader      PRDetailReader // optional; nil = detail pane not populated
 	width             int        // terminal width, 0 until first tea.WindowSizeMsg
 	height            int        // terminal height, 0 until first tea.WindowSizeMsg
@@ -275,6 +273,13 @@ func NewWithTheme(version, username string, sub Subscriber,
 		unsubscribe:  unsubscribe,
 		theme:        theme,
 	}
+}
+
+// WithBrowser returns a copy of m with the browser opener set to b. The 'o'
+// key binding uses this to open the focused PR's URL in the system browser.
+func (m Model) WithBrowser(b BrowserOpener) Model {
+	m.browser = b
+	return m
 }
 
 // WithDNDToggler returns a copy of m with the DND toggler set to t. The header
@@ -639,7 +644,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "o":
-		return m.dispatchToFocused(OpenPRMsg{})
+		sel := m.focusedPRSelector()
+		if sel == nil {
+			return m, waitForDBEvent(m.eventCh)
+		}
+		pr := sel.SelectedPR()
+		if pr == nil {
+			return m, waitForDBEvent(m.eventCh)
+		}
+		if m.browser == nil {
+			m.statusText = "error: no browser opener configured"
+			m.statusEventType = eventbus.PRUpdated
+			m.lastEventTime = m.clock.Now()
+			return m, waitForDBEvent(m.eventCh)
+		}
+		url := pr.URL
+		return m, tea.Batch(func() tea.Msg {
+			if err := m.browser.Open(url); err != nil {
+				return CommandResultMsg{Err: err}
+			}
+			return CommandResultMsg{Status: fmt.Sprintf("opened %s", url)}
+		}, waitForDBEvent(m.eventCh))
 
 	case "d":
 		return m.dispatchToFocused(ShowDiffMsg{})
