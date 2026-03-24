@@ -383,6 +383,70 @@ func TestRunTUI_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRunTUI_HappyPath_SessionIDsAssigned(t *testing.T) {
+	db, err := persistence.OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+
+	now := time.Now()
+	// Seed three PRs: two by the authenticated user (tests same-category
+	// tiebreaker by LastActivityAt) and one by another author.
+	_ = db.UpsertPullRequest(persistence.PullRequest{
+		Repo: "org/repo", Number: 1, Title: "My older PR", Author: "testuser",
+		URL: "https://github.com/org/repo/pull/1", LastActivityAt: now.Add(-3 * time.Hour),
+	})
+	_ = db.UpsertPullRequest(persistence.PullRequest{
+		Repo: "org/repo", Number: 3, Title: "My newer PR", Author: "testuser",
+		URL: "https://github.com/org/repo/pull/3", LastActivityAt: now.Add(-1 * time.Hour),
+	})
+	_ = db.UpsertPullRequest(persistence.PullRequest{
+		Repo: "org/repo", Number: 2, Title: "Review PR", Author: "other",
+		URL: "https://github.com/org/repo/pull/2", LastActivityAt: now.Add(-2 * time.Hour),
+	})
+
+	deps := happyDeps(t)
+	deps.openDB = func() (*persistence.DB, error) { return db, nil }
+
+	// Check session IDs from within runProgram. The poller goroutine runs its
+	// initial fetch concurrently, so poll briefly until session IDs appear.
+	deps.runProgram = func(_ tea.Model) error {
+		deadline := time.After(2 * time.Second)
+		for {
+			sid1, _ := db.GetSessionID("https://github.com/org/repo/pull/1")
+			if sid1 != "" {
+				sid3, _ := db.GetSessionID("https://github.com/org/repo/pull/3")
+				sid2, _ := db.GetSessionID("https://github.com/org/repo/pull/2")
+				// Own PRs sort first (by LastActivityAt asc), then others.
+				// PR 1 (testuser, -3h) → "a", PR 3 (testuser, -1h) → "b",
+				// PR 2 (other, -2h) → "c".
+				if sid1 != "a" {
+					t.Errorf("session ID for PR 1 = %q, want %q", sid1, "a")
+				}
+				if sid3 != "b" {
+					t.Errorf("session ID for PR 3 = %q, want %q", sid3, "b")
+				}
+				if sid2 != "c" {
+					t.Errorf("session ID for PR 2 = %q, want %q", sid2, "c")
+				}
+				return nil
+			}
+			select {
+			case <-deadline:
+				t.Fatal("session IDs not assigned within timeout")
+				return nil
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := runTUI(ctx, "test", deps); err != nil {
+		t.Fatalf("runTUI() err = %v", err)
+	}
+}
+
 func TestRunTUI_HappyPath_GHCLI(t *testing.T) {
 	deps := happyDeps(t)
 	deps.authenticate = func(_ context.Context) (*api.Credentials, error) {

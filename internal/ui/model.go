@@ -431,6 +431,12 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		m.statusEventType = e.Type
 		m.lastEventTime = m.clock.Now()
 
+	case eventbus.SessionIDsAssigned:
+		var c1, c2 tea.Cmd
+		m.myPRs, c1 = m.myPRs.Update(DBEventMsg{Event: e})
+		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
+		cmds = append(cmds, c1, c2)
+
 	case eventbus.RateLimitWarning:
 		m.statusText = "⚠ API rate limit low"
 		m.statusEventType = e.Type

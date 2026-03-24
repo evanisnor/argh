@@ -538,3 +538,80 @@ func TestPoller_Wake_NonNilSleepChecker(t *testing.T) {
 		t.Error("expected Wake to be called on sleep checker")
 	}
 }
+
+// ── PostFetch hook tests ──────────────────────────────────────────────────────
+
+func TestPoller_PostFetchHook_CalledAfterSuccessfulFetch(t *testing.T) {
+	hookCalled := make(chan struct{}, 10)
+
+	rl := NewStubRateLimitReader(5000)
+	tickerCh := make(chan *FakeTicker, 1)
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), rl, time.Second, func(d time.Duration) Ticker {
+		ft := NewFakeTicker(d)
+		tickerCh <- ft
+		return ft
+	})
+	p.SetPostFetchHook(func() {
+		hookCalled <- struct{}{}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := p.Start(ctx)
+	defer func() { cancel(); <-done }()
+
+	select {
+	case <-tickerCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+
+	// Initial fetch triggers the hook.
+	select {
+	case <-hookCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("postFetch hook was not called after initial fetch")
+	}
+}
+
+func TestPoller_PostFetchHook_CalledEvenWhenFetcherErrors(t *testing.T) {
+	hookCalled := make(chan struct{}, 10)
+
+	myPRs := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		return errors.New("fetch error")
+	}}
+
+	rl := NewStubRateLimitReader(5000)
+	tickerCh := make(chan *FakeTicker, 1)
+	p := NewPoller(myPRs, NewStubFetcher(), rl, time.Second, func(d time.Duration) Ticker {
+		ft := NewFakeTicker(d)
+		tickerCh <- ft
+		return ft
+	})
+	p.SetPostFetchHook(func() {
+		hookCalled <- struct{}{}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := p.Start(ctx)
+	defer func() { cancel(); <-done }()
+
+	select {
+	case <-tickerCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+
+	// Hook must fire even though myPRs.Fetch returned an error.
+	select {
+	case <-hookCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("postFetch hook was not called after failed fetch")
+	}
+}
+
+func TestPoller_PostFetchHook_NilHookDoesNotPanic(t *testing.T) {
+	rl := NewStubRateLimitReader(5000)
+	// No hook set — postFetch is nil. Must not panic.
+	_, cancel, _, done := startPoller(t, NewStubFetcher(), NewStubFetcher(), rl, time.Second)
+	defer func() { cancel(); <-done }()
+}

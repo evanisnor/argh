@@ -30,6 +30,10 @@ const (
 	// PRRemoved fires when a previously-tracked PR is no longer returned by the API
 	// (e.g. merged or closed). Before contains the deleted PullRequest; After is nil.
 	PRRemoved EventType = "PR_REMOVED"
+
+	// SessionIDsAssigned fires after session IDs have been (re)assigned to PRs.
+	// Panels should refresh to pick up the new session IDs.
+	SessionIDsAssigned EventType = "SESSION_IDS_ASSIGNED"
 )
 
 // Event carries the type of change plus before/after snapshots of the

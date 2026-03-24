@@ -85,7 +85,7 @@ func (p *ReviewQueuePanel) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 		p.width = m.Width
 	case DBEventMsg:
 		switch m.Event.Type {
-		case eventbus.PRUpdated, eventbus.CIChanged, eventbus.ReviewChanged, eventbus.PRRemoved:
+		case eventbus.PRUpdated, eventbus.CIChanged, eventbus.ReviewChanged, eventbus.PRRemoved, eventbus.SessionIDsAssigned:
 			if pr, ok := m.Event.After.(persistence.PullRequest); ok {
 				p.flashing[pr.ID] = true
 			}

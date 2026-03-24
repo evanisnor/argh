@@ -423,6 +423,32 @@ func TestDBEvent_PRRemoved_DispatchesToMyPRsAndReviewQueue(t *testing.T) {
 	}
 }
 
+// TestDBEvent_SessionIDsAssigned_DispatchesToMyPRsAndReviewQueue verifies routing.
+func TestDBEvent_SessionIDsAssigned_DispatchesToMyPRsAndReviewQueue(t *testing.T) {
+	myPRs := newStub("myPRs", true)
+	rq := newStub("reviewQueue", true)
+	watches := newStub("watches", false)
+
+	m, _ := newTestModel(myPRs, rq, watches, newStub("detail", false), newStub("cmdBar", false))
+
+	e := eventbus.Event{Type: eventbus.SessionIDsAssigned}
+	m = applyMsg(m, DBEventMsg{Event: e})
+
+	if m.myPRs.(*stubSubModel).lastMsg == nil {
+		t.Error("myPRs did not receive the SessionIDsAssigned message")
+	}
+	if m.reviewQueue.(*stubSubModel).lastMsg == nil {
+		t.Error("reviewQueue did not receive the SessionIDsAssigned message")
+	}
+	if m.watches.(*stubSubModel).lastMsg != nil {
+		t.Error("watches should NOT receive SessionIDsAssigned message")
+	}
+	// SessionIDsAssigned should not update the status text.
+	if m.statusText != "" {
+		t.Errorf("statusText = %q, want empty", m.statusText)
+	}
+}
+
 // TestDBEvent_WatchFired_DispatchesToWatchesOnly verifies that a WatchFired
 // event is routed exclusively to the Watches sub-model.
 func TestDBEvent_WatchFired_DispatchesToWatchesOnly(t *testing.T) {

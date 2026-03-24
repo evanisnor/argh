@@ -436,6 +436,21 @@ func TestMyPRsPanel_DBEventMsg_PRRemoved_RefreshesNoFlash(t *testing.T) {
 	}
 }
 
+// TestMyPRsPanel_DBEventMsg_SessionIDsAssigned_RefreshesNoFlash verifies that a
+// SessionIDsAssigned event triggers a refresh but does not set flash.
+func TestMyPRsPanel_DBEventMsg_SessionIDsAssigned_RefreshesNoFlash(t *testing.T) {
+	reader := newStubPRReader()
+	panel := makePanel(reader)
+
+	msg := DBEventMsg{Event: eventbus.Event{Type: eventbus.SessionIDsAssigned}}
+	updated, _ := panel.Update(msg)
+	updatedPanel := updated.(*MyPRsPanel)
+
+	if len(updatedPanel.flashing) != 0 {
+		t.Errorf("expected no flashing entries for SessionIDsAssigned, got: %v", updatedPanel.flashing)
+	}
+}
+
 // TestMyPRsPanel_MoveFocus verifies j/k navigation stays within bounds.
 func TestMyPRsPanel_MoveFocus(t *testing.T) {
 	reader := newStubPRReader()

@@ -52,6 +52,7 @@ type Poller struct {
 	newTicker    NewTickerFunc
 	forcePoll    chan struct{}
 	sleepChecker SleepScheduleChecker
+	postFetch    func()
 }
 
 // NewPoller constructs a Poller.
@@ -86,6 +87,13 @@ func (p *Poller) ForcePoll() {
 	case p.forcePoll <- struct{}{}:
 	default:
 	}
+}
+
+// SetPostFetchHook registers a function that is called after every fetch
+// cycle, regardless of whether the fetchers succeeded or failed. Must be
+// called before Start.
+func (p *Poller) SetPostFetchHook(fn func()) {
+	p.postFetch = fn
 }
 
 // SetSleepSchedule configures an optional sleep schedule. Must be called
@@ -160,9 +168,15 @@ func (p *Poller) pollState() (interval time.Duration, fetch bool) {
 	return p.baseInterval * time.Duration(multiplier), true
 }
 
-// fetch calls both fetchers sequentially. The poller continues running
-// regardless of errors; callers are responsible for observability.
+// fetch calls both fetchers sequentially, then invokes the postFetch hook
+// (if set). The hook fires regardless of fetcher errors. The poller continues
+// running regardless of errors; callers are responsible for observability.
 func (p *Poller) fetch(ctx context.Context) error {
+	defer func() {
+		if p.postFetch != nil {
+			p.postFetch()
+		}
+	}()
 	if err := p.myPRs.Fetch(ctx); err != nil {
 		return err
 	}

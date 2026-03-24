@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +29,7 @@ import (
 	"github.com/evanisnor/argh/internal/ghcli"
 	"github.com/evanisnor/argh/internal/notify"
 	"github.com/evanisnor/argh/internal/persistence"
+	"github.com/evanisnor/argh/internal/session"
 	"github.com/evanisnor/argh/internal/status"
 	"github.com/evanisnor/argh/internal/suggest"
 	"github.com/evanisnor/argh/internal/ui"
@@ -397,6 +399,28 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 			cfg.SleepSchedule.PollInterval.Duration, api.RealClock{})
 		poller.SetSleepSchedule(sleep)
 	}
+
+	sessionMgr := session.New(db)
+	poller.SetPostFetchHook(func() {
+		prs, err := db.ListPullRequests()
+		if err != nil {
+			return
+		}
+		sort.Slice(prs, func(i, j int) bool {
+			iMine := prs[i].Author == creds.Login
+			jMine := prs[j].Author == creds.Login
+			if iMine != jMine {
+				return iMine
+			}
+			return prs[i].LastActivityAt.Before(prs[j].LastActivityAt)
+		})
+		urls := make([]string, len(prs))
+		for i, pr := range prs {
+			urls[i] = pr.URL
+		}
+		_ = sessionMgr.Assign(urls)
+		bus.Publish(eventbus.Event{Type: eventbus.SessionIDsAssigned})
+	})
 
 	// ── Do Not Disturb ───────────────────────────────────────────────────────
 
