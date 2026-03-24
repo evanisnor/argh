@@ -108,15 +108,34 @@ var prHeaders = []string{"", "", "REPO", "#", "TITLE", "●", "⚙", "✓✗", "
 var prColWidths = []int{1, 2, 14, 5, 0, 17, 2, 5, 2, 3}
 
 // prBaseStyle returns the base layout style (width + alignment) for a column.
-func prBaseStyle(col int) lipgloss.Style {
+func prBaseStyle(widths []int, col int) lipgloss.Style {
 	s := lipgloss.NewStyle()
-	if col < len(prColWidths) && prColWidths[col] > 0 {
-		s = s.Width(prColWidths[col])
+	if col < len(widths) && widths[col] > 0 {
+		s = s.Width(widths[col])
 	}
 	if col <= 1 {
 		s = s.AlignHorizontal(lipgloss.Right)
 	}
 	return s
+}
+
+// fitColWidths returns a copy of base with the specified columns widened to
+// fit the widest cell content (including headers).
+func fitColWidths(base []int, headers []string, rows [][]string, cols ...int) []int {
+	widths := make([]int, len(base))
+	copy(widths, base)
+	for _, c := range cols {
+		best := ansi.StringWidth(headers[c])
+		for _, row := range rows {
+			if c < len(row) {
+				if w := ansi.StringWidth(row[c]); w > best {
+					best = w
+				}
+			}
+		}
+		widths[c] = best
+	}
+	return widths
 }
 
 // View renders the panel content (title/border is added by the root model).
@@ -131,8 +150,10 @@ func (p *MyPRsPanel) View() string {
 		rows[i] = p.buildPRCells(row, now)
 	}
 
+	widths := fitColWidths(prColWidths, prHeaders, rows, 2, 3)
+
 	sf := func(row, col int) lipgloss.Style {
-		base := prBaseStyle(col)
+		base := prBaseStyle(widths, col)
 		if row < 0 {
 			return base.Faint(true)
 		}

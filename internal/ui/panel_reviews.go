@@ -21,10 +21,10 @@ var rqHeaders = []string{"", "", "REPO", "#", "TITLE", "@", "⚙", "⏱", "!!"}
 var rqColWidths = []int{1, 2, 14, 5, 0, 12, 2, 3, 3}
 
 // rqBaseStyle returns the base layout style (width + alignment) for a column.
-func rqBaseStyle(col int) lipgloss.Style {
+func rqBaseStyle(widths []int, col int) lipgloss.Style {
 	s := lipgloss.NewStyle()
-	if col < len(rqColWidths) && rqColWidths[col] > 0 {
-		s = s.Width(rqColWidths[col])
+	if col < len(widths) && widths[col] > 0 {
+		s = s.Width(widths[col])
 	}
 	if col <= 1 {
 		s = s.AlignHorizontal(lipgloss.Right)
@@ -120,8 +120,10 @@ func (p *ReviewQueuePanel) View() string {
 		rows[i] = p.buildRQCells(row, now)
 	}
 
+	widths := fitColWidths(rqColWidths, rqHeaders, rows, 2, 3, 5)
+
 	sf := func(row, col int) lipgloss.Style {
-		base := rqBaseStyle(col)
+		base := rqBaseStyle(widths, col)
 		if row < 0 {
 			return base.Faint(true)
 		}
