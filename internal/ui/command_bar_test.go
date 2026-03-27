@@ -371,9 +371,13 @@ func TestCommandBar_Up_WithSuggestions_AtTopNoChange(t *testing.T) {
 	focusBar(t, cb)
 	typeInto(t, cb, ":me")
 	cb.suggCursor = 0
+	cb.suggOffset = 0
 	pressKey(t, cb, "up")
 	if cb.suggCursor != 0 {
 		t.Errorf("expected suggCursor=0, got %d", cb.suggCursor)
+	}
+	if cb.suggOffset != 0 {
+		t.Errorf("expected suggOffset=0, got %d", cb.suggOffset)
 	}
 }
 
@@ -393,9 +397,13 @@ func TestCommandBar_Down_WithSuggestions_AtBottomNoChange(t *testing.T) {
 	focusBar(t, cb)
 	typeInto(t, cb, ":me")
 	cb.suggCursor = len(cb.suggestions) - 1
+	offsetBefore := cb.suggOffset
 	pressKey(t, cb, "down")
 	if cb.suggCursor != len(cb.suggestions)-1 {
 		t.Errorf("expected cursor pinned at %d, got %d", len(cb.suggestions)-1, cb.suggCursor)
+	}
+	if cb.suggOffset != offsetBefore {
+		t.Errorf("expected suggOffset unchanged at bottom, got %d", cb.suggOffset)
 	}
 }
 
@@ -504,6 +512,8 @@ func TestCommandBar_Enter_AddsToHistory(t *testing.T) {
 	cb := NewCommandBar()
 	focusBar(t, cb)
 	typeInto(t, cb, ":reload")
+	// Clear suggestions so Enter executes rather than accepting a suggestion.
+	cb.suggestions = nil
 	pressKey(t, cb, "enter")
 	if len(cb.history) != 1 || cb.history[0] != ":reload" {
 		t.Errorf("expected history=[':reload'], got %v", cb.history)
@@ -516,9 +526,32 @@ func TestCommandBar_Enter_AddsToHistory(t *testing.T) {
 func TestCommandBar_Enter_EmptyInputNotAddedToHistory(t *testing.T) {
 	cb := NewCommandBar()
 	focusBar(t, cb)
+	cb.suggestions = nil
 	pressKey(t, cb, "enter")
 	if len(cb.history) != 0 {
 		t.Errorf("expected empty history, got %v", cb.history)
+	}
+}
+
+func TestCommandBar_Enter_WithSuggestions_AcceptsSuggestion(t *testing.T) {
+	cb := NewCommandBar()
+	disp := &stubDispatcher{}
+	cb.SetExecutor(disp)
+	focusBar(t, cb)
+	typeInto(t, cb, ":mer")
+	// Navigate down to ensure cursor selection works.
+	pressKey(t, cb, "down")
+	selected := cb.suggestions[cb.suggCursor]
+	pressKey(t, cb, "enter")
+	// Should populate input with the selected command, not execute.
+	if !strings.HasPrefix(cb.Value(), selected) {
+		t.Errorf("expected input to start with %q, got %q", selected, cb.Value())
+	}
+	if disp.called {
+		t.Error("expected executor NOT to be called when accepting a suggestion")
+	}
+	if len(cb.history) != 0 {
+		t.Errorf("expected empty history after accepting suggestion, got %v", cb.history)
 	}
 }
 
@@ -917,6 +950,8 @@ func TestCommandBar_SetExecutor_DispatchesOnEnter(t *testing.T) {
 
 	focusBar(t, cb)
 	typeInto(t, cb, ":reload")
+	// Clear suggestions so Enter executes rather than accepting a suggestion.
+	cb.suggestions = nil
 	pressKey(t, cb, "enter")
 
 	if !disp.called {
@@ -945,6 +980,150 @@ func TestCommandBar_NoExecutor_EnterDoesNotPanic(t *testing.T) {
 	cb := NewCommandBar()
 	focusBar(t, cb)
 	typeInto(t, cb, ":reload")
+	// Clear suggestions so Enter executes rather than accepting a suggestion.
+	cb.suggestions = nil
 	// No executor set — must not panic.
 	pressKey(t, cb, "enter")
+}
+
+// ── Suggestion scrolling ─────────────────────────────────────────────────────
+
+func TestCommandBar_Down_ScrollsOffset(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	// Empty input gives all commands. Press down maxSuggestions times
+	// to move cursor past the initial visible window.
+	for i := 0; i < maxSuggestions; i++ {
+		pressKey(t, cb, "down")
+	}
+	if cb.suggCursor != maxSuggestions {
+		t.Errorf("expected suggCursor=%d, got %d", maxSuggestions, cb.suggCursor)
+	}
+	if cb.suggOffset != 1 {
+		t.Errorf("expected suggOffset=1, got %d", cb.suggOffset)
+	}
+	sv := cb.SuggestionsView()
+	if !strings.Contains(sv, "> ") {
+		t.Errorf("expected cursor visible in SuggestionsView after scrolling, got: %q", sv)
+	}
+}
+
+func TestCommandBar_Up_ScrollsOffset(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	// Scroll down past the window, then up past the current offset.
+	for i := 0; i < maxSuggestions+2; i++ {
+		pressKey(t, cb, "down")
+	}
+	// cursor=maxSuggestions+2, offset=3
+	for i := 0; i < maxSuggestions; i++ {
+		pressKey(t, cb, "up")
+	}
+	if cb.suggCursor != 2 {
+		t.Errorf("expected suggCursor=2, got %d", cb.suggCursor)
+	}
+	if cb.suggOffset != 2 {
+		t.Errorf("expected suggOffset=2, got %d", cb.suggOffset)
+	}
+}
+
+func TestCommandBar_SuggestionsView_WindowFollowsCursor(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	for i := 0; i < 10; i++ {
+		pressKey(t, cb, "down")
+	}
+	sv := cb.SuggestionsView()
+	lines := strings.Split(sv, "\n")
+	if len(lines) > maxSuggestions {
+		t.Errorf("expected at most %d lines, got %d", maxSuggestions, len(lines))
+	}
+	cursorCount := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "> ") {
+			cursorCount++
+		}
+	}
+	if cursorCount != 1 {
+		t.Errorf("expected exactly 1 cursor indicator, got %d", cursorCount)
+	}
+}
+
+func TestCommandBar_RefreshSuggestions_ResetsOffset(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	cb.suggCursor = 100
+	cb.suggOffset = 50
+	cb.refreshSuggestions()
+	if cb.suggCursor != 0 {
+		t.Errorf("expected suggCursor=0, got %d", cb.suggCursor)
+	}
+	if cb.suggOffset != 0 {
+		t.Errorf("expected suggOffset=0, got %d", cb.suggOffset)
+	}
+}
+
+func TestCommandBar_RefreshSuggestions_ClampsStaleOffset(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	// Empty input produces all commands (18). Scroll down to build a real offset.
+	for i := 0; i < maxSuggestions+2; i++ {
+		pressKey(t, cb, "down")
+	}
+	// Now cursor=10, offset=3 with 18 suggestions. Type a character that
+	// narrows the list so the cursor is still valid but offset is stale.
+	// We'll manually set cursor to a value that will be valid in the new
+	// shorter list, but leave offset artificially high.
+	cb.suggCursor = 2
+	cb.suggOffset = 5
+	// Input is empty — type something that produces more than maxSuggestions
+	// suggestions so maxOff >= 0. ":" gives all 18 commands.
+	cb.input.SetValue(":")
+	cb.refreshSuggestions()
+	// 18 commands, maxOff = 18-8 = 10. offset 5 <= 10, so no clamping.
+	// Instead, use a query that produces fewer but >8 results.
+	// Actually let's directly test the clamping path:
+	// Set offset high, cursor valid, then call refresh with input that yields
+	// enough suggestions that cursor is valid but offset exceeds maxOff.
+	cb.input.SetValue("") // all 18 commands
+	cb.suggCursor = 3
+	cb.suggOffset = 15 // > 18-8=10, should clamp to 10
+	cb.refreshSuggestions()
+	maxOff := len(cb.suggestions) - maxSuggestions
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if cb.suggOffset != maxOff {
+		t.Errorf("expected suggOffset=%d, got %d", maxOff, cb.suggOffset)
+	}
+}
+
+func TestCommandBar_BlurResetsSuggOffset(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	for i := 0; i < maxSuggestions+2; i++ {
+		pressKey(t, cb, "down")
+	}
+	if cb.suggOffset == 0 {
+		t.Fatal("expected non-zero suggOffset before blur")
+	}
+	sm, _ := cb.Update(BlurCommandBarMsg{})
+	cb = sm.(*CommandBar)
+	if cb.suggOffset != 0 {
+		t.Errorf("expected suggOffset=0 after blur, got %d", cb.suggOffset)
+	}
+}
+
+func TestCommandBar_SuggestionsView_FewerThanMax(t *testing.T) {
+	cb := NewCommandBar()
+	focusBar(t, cb)
+	typeInto(t, cb, ":mer")
+	sv := cb.SuggestionsView()
+	lines := strings.Split(sv, "\n")
+	if len(lines) > len(cb.suggestions) {
+		t.Errorf("lines (%d) should not exceed suggestion count (%d)", len(lines), len(cb.suggestions))
+	}
+	if len(lines) > maxSuggestions {
+		t.Errorf("lines (%d) should not exceed maxSuggestions (%d)", len(lines), maxSuggestions)
+	}
 }

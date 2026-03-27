@@ -20,7 +20,7 @@ const (
 	cbModeCollaborator               // completing a @user for :request
 )
 
-const maxSuggestions = 5
+const maxSuggestions = 8
 
 // commandDef describes a command and its autocomplete behavior.
 type commandDef struct {
@@ -75,6 +75,7 @@ type CommandBar struct {
 	focused       bool
 	suggestions   []string
 	suggCursor    int
+	suggOffset    int // index of first visible suggestion
 	history       []string
 	histCursor    int    // -1 means not in history navigation
 	savedInput    string // input saved when entering history navigation
@@ -141,6 +142,7 @@ func (c *CommandBar) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 		c.input.SetValue("")
 		c.suggestions = nil
 		c.suggCursor = 0
+		c.suggOffset = 0
 		c.histCursor = -1
 		c.savedInput = ""
 		c.mode = cbModeCommand
@@ -180,6 +182,9 @@ func (c *CommandBar) handleKey(msg tea.KeyMsg) (SubModel, tea.Cmd) {
 		if len(c.suggestions) > 0 {
 			if c.suggCursor > 0 {
 				c.suggCursor--
+				if c.suggCursor < c.suggOffset {
+					c.suggOffset = c.suggCursor
+				}
 			}
 		} else {
 			c.historyBack()
@@ -190,6 +195,9 @@ func (c *CommandBar) handleKey(msg tea.KeyMsg) (SubModel, tea.Cmd) {
 		if len(c.suggestions) > 0 {
 			if c.suggCursor < len(c.suggestions)-1 {
 				c.suggCursor++
+				if c.suggCursor >= c.suggOffset+maxSuggestions {
+					c.suggOffset = c.suggCursor - maxSuggestions + 1
+				}
 			}
 		} else {
 			c.historyForward()
@@ -201,6 +209,10 @@ func (c *CommandBar) handleKey(msg tea.KeyMsg) (SubModel, tea.Cmd) {
 		return c, nil
 
 	case "enter":
+		if len(c.suggestions) > 0 {
+			c.acceptTopSuggestion()
+			return c, nil
+		}
 		val := c.input.Value()
 		c.commitToHistory()
 		c.input.SetValue("")
@@ -287,6 +299,10 @@ func (c *CommandBar) refreshSuggestions() {
 	c.mode, c.hint, c.suggestions = computeSuggestions(c.input.Value(), c.prRefs, c.collaborators)
 	if c.suggCursor >= len(c.suggestions) {
 		c.suggCursor = 0
+		c.suggOffset = 0
+	}
+	if maxOff := len(c.suggestions) - maxSuggestions; c.suggOffset > 0 && maxOff >= 0 && c.suggOffset > maxOff {
+		c.suggOffset = maxOff
 	}
 }
 
@@ -454,13 +470,13 @@ func (c *CommandBar) SuggestionsView() string {
 	if len(c.suggestions) == 0 {
 		return ""
 	}
-	limit := len(c.suggestions)
-	if limit > maxSuggestions {
-		limit = maxSuggestions
+	end := c.suggOffset + maxSuggestions
+	if end > len(c.suggestions) {
+		end = len(c.suggestions)
 	}
 	var sb strings.Builder
-	for i := 0; i < limit; i++ {
-		if i > 0 {
+	for i := c.suggOffset; i < end; i++ {
+		if i > c.suggOffset {
 			sb.WriteString("\n")
 		}
 		if i == c.suggCursor {
