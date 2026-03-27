@@ -352,14 +352,16 @@ func DeriveCIState(runs []CheckRunData) string {
 		return "none"
 	}
 	for _, run := range runs {
-		if run.Status != "COMPLETED" {
-			return "running"
+		if run.Status == "COMPLETED" {
+			switch run.Conclusion {
+			case "FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE":
+				return "failing"
+			}
 		}
 	}
 	for _, run := range runs {
-		switch run.Conclusion {
-		case "FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE":
-			return "failing"
+		if run.Status != "COMPLETED" {
+			return "running"
 		}
 	}
 	return "passing"

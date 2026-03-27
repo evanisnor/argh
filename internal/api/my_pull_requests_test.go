@@ -531,6 +531,14 @@ func TestDeriveCIState(t *testing.T) {
 			},
 			want: "failing",
 		},
+		{
+			name: "one COMPLETED FAILURE + one IN_PROGRESS → failing",
+			runs: []CheckRunData{
+				{Status: "COMPLETED", Conclusion: "FAILURE"},
+				{Status: "IN_PROGRESS", Conclusion: ""},
+			},
+			want: "failing",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
