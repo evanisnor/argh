@@ -124,15 +124,16 @@ func (f *fakeBrowserOpener) Open(url string) error {
 	return f.openErr
 }
 
-// fakeDiffViewer records ShowDiff calls.
+// fakeDiffViewer records ShowDiff calls and returns configurable content.
 type fakeDiffViewer struct {
 	called  bool
+	content string
 	showErr error
 }
 
-func (f *fakeDiffViewer) ShowDiff(_ string, _ int) error {
+func (f *fakeDiffViewer) ShowDiff(_ string, _ int) (string, error) {
 	f.called = true
-	return f.showErr
+	return f.content, f.showErr
 }
 
 // fakeDNDController records DND calls.
@@ -549,16 +550,19 @@ func TestExecute_Open_PRNotFound(t *testing.T) {
 // ── :diff ─────────────────────────────────────────────────────────────────────
 
 func TestExecute_Diff(t *testing.T) {
-	diff := &fakeDiffViewer{}
+	diff := &fakeDiffViewer{content: "--- a/file\n+++ b/file\n"}
 	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
 	exec := NewCommandExecutor(CommandExecutorConfig{Diff: diff, Store: store})
 	msg := runCmd(t, exec.Execute("diff", []string{"a"}))
-	r, ok := msg.(CommandResultMsg)
+	r, ok := msg.(ShowDiffContentMsg)
 	if !ok {
-		t.Fatalf("expected CommandResultMsg, got %T", msg)
+		t.Fatalf("expected ShowDiffContentMsg, got %T", msg)
 	}
-	if r.Err != nil {
-		t.Errorf("unexpected error: %v", r.Err)
+	if r.Content != "--- a/file\n+++ b/file\n" {
+		t.Errorf("unexpected content: %q", r.Content)
+	}
+	if r.Title == "" {
+		t.Error("expected non-empty title")
 	}
 	if !diff.called {
 		t.Error("ShowDiff should have been called")

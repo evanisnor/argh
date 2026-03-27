@@ -34,19 +34,21 @@ type SubprocessCall struct {
 
 // StubSubprocessRunner is a test double for SubprocessRunner.
 type StubSubprocessRunner struct {
-	RunFunc func(name string, args []string, stdin []byte) error
+	RunFunc func(name string, args []string, stdin []byte) ([]byte, error)
 	Calls   []SubprocessCall
 }
 
 // NewStubSubprocessRunner returns a StubSubprocessRunner that succeeds by default.
 func NewStubSubprocessRunner() *StubSubprocessRunner {
 	return &StubSubprocessRunner{
-		RunFunc: func(name string, args []string, stdin []byte) error { return nil },
+		RunFunc: func(name string, args []string, stdin []byte) ([]byte, error) {
+			return stdin, nil
+		},
 	}
 }
 
 // Run records the call and delegates to RunFunc.
-func (s *StubSubprocessRunner) Run(name string, args []string, stdin []byte) error {
+func (s *StubSubprocessRunner) Run(name string, args []string, stdin []byte) ([]byte, error) {
 	s.Calls = append(s.Calls, SubprocessCall{Name: name, Args: args, Stdin: stdin})
 	return s.RunFunc(name, args, stdin)
 }

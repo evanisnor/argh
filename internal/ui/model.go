@@ -43,9 +43,6 @@ type BlurCommandBarMsg struct{}
 // RefreshMsg tells a panel to reload its data from the database immediately.
 type RefreshMsg struct{}
 
-// ShowDiffMsg is sent to the focused panel when the user presses d.
-type ShowDiffMsg struct{}
-
 // ApprovePRMsg is sent to the Review Queue panel when the user presses a.
 type ApprovePRMsg struct{}
 
@@ -195,6 +192,9 @@ type Model struct {
 	detailPane        SubModel
 	commandBar        SubModel
 	detailOpen        bool
+	diffVisible       bool
+	diffTitle         string
+	diffViewport      viewport.Model
 	helpVisible       bool
 	helpViewport      viewport.Model
 	commandBarFocused bool
@@ -208,6 +208,7 @@ type Model struct {
 	browser           BrowserOpener  // optional; nil = browser not available
 	dndToggler        DNDToggler     // optional; nil = no DND control
 	detailReader      PRDetailReader // optional; nil = detail pane not populated
+	diffViewer        DiffViewer     // optional; nil = diff not available
 	width             int        // terminal width, 0 until first tea.WindowSizeMsg
 	height            int        // terminal height, 0 until first tea.WindowSizeMsg
 }
@@ -241,6 +242,7 @@ func New(version, username string, sub Subscriber,
 		detailPane:   detailPane,
 		commandBar:   commandBar,
 		detailOpen:   false,
+		diffViewport: viewport.New(80, 20),
 		helpViewport: vp,
 		statusText:   "",
 		clock:        realClock{},
@@ -277,6 +279,7 @@ func NewWithTheme(version, username string, sub Subscriber,
 		detailPane:   detailPane,
 		commandBar:   commandBar,
 		detailOpen:   false,
+		diffViewport: viewport.New(80, 20),
 		helpViewport: vp2,
 		statusText:   "",
 		clock:        clock,
@@ -306,6 +309,14 @@ func (m Model) WithDNDToggler(t DNDToggler) Model {
 // review threads, watches, timeline) when the user opens it.
 func (m Model) WithDetailReader(r PRDetailReader) Model {
 	m.detailReader = r
+	return m
+}
+
+// WithDiffViewer returns a copy of m with the diff viewer set to d. The 'd'
+// key binding and :diff command use this to fetch and display PR diffs in a
+// modal overlay.
+func (m Model) WithDiffViewer(d DiffViewer) Model {
+	m.diffViewer = d
 	return m
 }
 
@@ -345,6 +356,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commandBar, cmd = m.commandBar.Update(BlurCommandBarMsg{})
 		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 
+	case ShowDiffContentMsg:
+		m.diffVisible = true
+		m.diffTitle = ev.Title
+		m.diffViewport.SetContent(ev.Content)
+		m.diffViewport.GotoTop()
+		m.statusText = fmt.Sprintf("diff %s", ev.Title)
+		m.statusEventType = eventbus.PRUpdated
+		m.lastEventTime = m.clock.Now()
+		m.commandBarFocused = false
+		var cmd tea.Cmd
+		m.commandBar, cmd = m.commandBar.Update(BlurCommandBarMsg{})
+		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+
 	case WatchChangedMsg:
 		m.statusText = ev.Status
 		m.statusEventType = eventbus.PRUpdated
@@ -376,6 +400,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helpViewport.Width = vpW
 		m.helpViewport.Height = vpH
 		m.helpViewport.SetContent(renderHelpContent(m.theme, m.version, m.username))
+		m.diffViewport.Width = vpW
+		m.diffViewport.Height = vpH
 		m.propagateResize()
 		return m, waitForDBEvent(m.eventCh)
 
@@ -592,6 +618,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, waitForDBEvent(m.eventCh)
 	}
 
+	// When the diff modal is visible, scroll keys go to the viewport; Esc and
+	// q dismiss the overlay; all other keys are swallowed.
+	if m.diffVisible {
+		switch msg.String() {
+		case "esc", "q":
+			m.diffVisible = false
+		case "j", "down", "pgdown":
+			m.diffViewport, _ = m.diffViewport.Update(msg)
+		case "k", "up", "pgup":
+			m.diffViewport, _ = m.diffViewport.Update(msg)
+		}
+		return m, waitForDBEvent(m.eventCh)
+	}
+
 	// When the command bar is focused, every keystroke goes directly to it
 	// so the textinput receives every character. Only ctrl+c (quit) and esc
 	// (blur) are kept as root-model concerns.
@@ -705,7 +745,31 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focused == PanelWatches {
 			return m.dispatchToFocused(CancelWatchMsg{})
 		}
-		return m.dispatchToFocused(ShowDiffMsg{})
+		sel := m.focusedPRSelector()
+		if sel == nil {
+			return m, waitForDBEvent(m.eventCh)
+		}
+		pr := sel.SelectedPR()
+		if pr == nil {
+			return m, waitForDBEvent(m.eventCh)
+		}
+		if m.diffViewer == nil {
+			m.statusText = "error: no diff viewer configured"
+			m.statusEventType = eventbus.PRUpdated
+			m.lastEventTime = m.clock.Now()
+			return m, waitForDBEvent(m.eventCh)
+		}
+		repo, number := pr.Repo, pr.Number
+		return m, tea.Batch(func() tea.Msg {
+			content, err := m.diffViewer.ShowDiff(repo, number)
+			if err != nil {
+				return CommandResultMsg{Err: err}
+			}
+			return ShowDiffContentMsg{
+				Title:   fmt.Sprintf("%s#%d", repo, number),
+				Content: content,
+			}
+		}, waitForDBEvent(m.eventCh))
 
 	case "a":
 		if m.focused == PanelReviewQueue {
@@ -1012,6 +1076,10 @@ func (m Model) View() string {
 		normal = overlayModal(normal, m.detailPaneView(), m.width, m.height)
 	}
 
+	if m.diffVisible {
+		normal = overlayModal(normal, m.diffModalView(), m.width, m.height)
+	}
+
 	if m.helpVisible {
 		return overlayModal(normal, m.helpModalView(), m.width, m.height)
 	}
@@ -1086,6 +1154,35 @@ func (m Model) detailPaneView() string {
 		style = style.Width(modalW - 2).Height(modalH - 3)
 	}
 	return style.Render(m.theme.PanelTitle.Render("DETAIL") + "\n" + m.detailPane.View())
+}
+
+// diffModalView renders the diff overlay as a centered floating modal. The box
+// uses a rounded border and contains the scrollable diff viewport.
+func (m Model) diffModalView() string {
+	borderColor := lipgloss.Color("#7C7CF8")
+	if !m.theme.Dark {
+		borderColor = lipgloss.Color("#3030AA")
+	}
+	w, h := helpViewportSize(m.width, m.height)
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1)
+	if w > 0 && h > 0 {
+		style = style.Width(w).Height(h)
+	}
+	title := m.theme.PanelTitle.Render("DIFF " + m.diffTitle)
+	scrollPct := m.diffViewport.ScrollPercent()
+	footer := lipgloss.NewStyle().Faint(true).Render(
+		"  j/k scroll · Esc dismiss" +
+			func() string {
+				if scrollPct < 1.0 {
+					return " · ↓ more"
+				}
+				return ""
+			}(),
+	)
+	return style.Render(title + "\n" + m.diffViewport.View() + "\n" + footer)
 }
 
 // helpModalView renders the help overlay as a centered floating modal. The box

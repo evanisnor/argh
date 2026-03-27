@@ -466,7 +466,8 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 		myPRsPanel, reviewQueuePanel, watchesPanel, detailPane, commandBar).
 		WithBrowser(&osBrowserOpener{}).
 		WithDNDToggler(dnd).
-		WithDetailReader(db)
+		WithDetailReader(db).
+		WithDiffViewer(diffViewer)
 
 	// ── Launch background goroutines ─────────────────────────────────────────
 

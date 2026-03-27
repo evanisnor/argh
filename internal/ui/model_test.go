@@ -121,8 +121,8 @@ func (s *stubBrowserOpener) Open(url string) error {
 }
 
 // executeBatchCmd recursively executes a tea.Cmd looking for the first
-// non-nil tea.Msg that is a CommandResultMsg or DBEventMsg. It handles
-// tea.BatchMsg by iterating inner commands.
+// non-nil tea.Msg that is a CommandResultMsg, ShowDiffContentMsg, or
+// DBEventMsg. It handles tea.BatchMsg by iterating inner commands.
 func executeBatchCmd(cmd tea.Cmd) tea.Msg {
 	if cmd == nil {
 		return nil
@@ -131,7 +131,8 @@ func executeBatchCmd(cmd tea.Cmd) tea.Msg {
 	if batch, ok := msg.(tea.BatchMsg); ok {
 		for _, c := range batch {
 			if result := executeBatchCmd(tea.Cmd(c)); result != nil {
-				if _, isResult := result.(CommandResultMsg); isResult {
+				switch result.(type) {
+				case CommandResultMsg, ShowDiffContentMsg:
 					return result
 				}
 			}
@@ -1738,18 +1739,74 @@ func TestKey_O_WatchesPanel_NoOp(t *testing.T) {
 	}
 }
 
-// TestKey_D_SendsShowDiffToFocusedPanel verifies d dispatches ShowDiffMsg.
-func TestKey_D_SendsShowDiffToFocusedPanel(t *testing.T) {
-	rq := newStub("reviewQueue", true)
+// stubDiffViewer is a test double for DiffViewer.
+type stubDiffViewer struct {
+	content string
+	showErr error
+	called  bool
+}
+
+func (s *stubDiffViewer) ShowDiff(_ string, _ int) (string, error) {
+	s.called = true
+	return s.content, s.showErr
+}
+
+// TestKey_D_OnReviewQueue_FetchesDiff verifies d on a PR panel triggers a diff
+// fetch and produces a ShowDiffContentMsg.
+func TestKey_D_OnReviewQueue_FetchesDiff(t *testing.T) {
+	pr := &persistence.PullRequest{Repo: "owner/repo", Number: 42, URL: "https://github.com/owner/repo/pull/42"}
+	rq := newSelectorStub("reviewQueue", pr)
+	dv := &stubDiffViewer{content: "diff content"}
+	m, _ := newTestModel(newStub("myPRs", true), rq,
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelReviewQueue
+	m.diffViewer = dv
+
+	_, cmd := m.Update(keyRune('d'))
+	msg := executeBatchCmd(cmd)
+	if msg == nil {
+		t.Fatal("expected a message from the diff fetch cmd")
+	}
+	dc, ok := msg.(ShowDiffContentMsg)
+	if !ok {
+		t.Fatalf("expected ShowDiffContentMsg, got %T", msg)
+	}
+	if dc.Content != "diff content" {
+		t.Errorf("content = %q, want %q", dc.Content, "diff content")
+	}
+	if !dv.called {
+		t.Error("ShowDiff should have been called")
+	}
+}
+
+// TestKey_D_NoDiffViewer_SetsErrorStatus verifies d shows error when no diff
+// viewer is wired.
+func TestKey_D_NoDiffViewer_SetsErrorStatus(t *testing.T) {
+	pr := &persistence.PullRequest{Repo: "owner/repo", Number: 42, URL: "https://github.com/owner/repo/pull/42"}
+	rq := newSelectorStub("reviewQueue", pr)
 	m, _ := newTestModel(newStub("myPRs", true), rq,
 		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
 	m.focused = PanelReviewQueue
 
 	m = applyMsg(m, keyRune('d'))
 
-	if _, ok := m.reviewQueue.(*stubSubModel).lastMsg.(ShowDiffMsg); !ok {
-		t.Errorf("reviewQueue should receive ShowDiffMsg, got %T",
-			m.reviewQueue.(*stubSubModel).lastMsg)
+	if !strings.Contains(m.statusText, "no diff viewer") {
+		t.Errorf("expected error status about missing diff viewer, got %q", m.statusText)
+	}
+}
+
+// TestKey_D_NoPR_NoOp verifies d does nothing when no PR is selected.
+func TestKey_D_NoPR_NoOp(t *testing.T) {
+	rq := newSelectorStub("reviewQueue", nil) // no PR
+	m, _ := newTestModel(newStub("myPRs", true), rq,
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelReviewQueue
+	m.diffViewer = &stubDiffViewer{content: "should not be called"}
+
+	m = applyMsg(m, keyRune('d'))
+
+	if m.diffVisible {
+		t.Error("diff modal should not open when no PR is selected")
 	}
 }
 
@@ -2995,5 +3052,238 @@ func TestNextVisiblePanel(t *testing.T) {
 				t.Errorf("nextVisiblePanel() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// ── Diff modal tests ─────────────────────────────────────────────────────────
+
+// TestShowDiffContentMsg_OpensDiffModal verifies that receiving a
+// ShowDiffContentMsg sets diffVisible and populates the title.
+func TestShowDiffContentMsg_OpensDiffModal(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+
+	m = applyMsg(m, ShowDiffContentMsg{Title: "owner/repo#42", Content: "diff content"})
+
+	if !m.diffVisible {
+		t.Error("expected diffVisible to be true")
+	}
+	if m.diffTitle != "owner/repo#42" {
+		t.Errorf("diffTitle = %q, want %q", m.diffTitle, "owner/repo#42")
+	}
+	if !strings.Contains(m.statusText, "diff owner/repo#42") {
+		t.Errorf("statusText = %q, want to contain %q", m.statusText, "diff owner/repo#42")
+	}
+}
+
+// TestShowDiffContentMsg_BlursCommandBar verifies that the command bar is
+// unfocused when a diff modal opens.
+func TestShowDiffContentMsg_BlursCommandBar(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.commandBarFocused = true
+
+	m = applyMsg(m, ShowDiffContentMsg{Title: "t", Content: "c"})
+
+	if m.commandBarFocused {
+		t.Error("expected command bar to be unfocused after opening diff modal")
+	}
+}
+
+// TestKey_Esc_DismissesDiffModal verifies Esc closes the diff overlay.
+func TestKey_Esc_DismissesDiffModal(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.diffVisible = true
+
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.diffVisible {
+		t.Error("expected diffVisible to be false after Esc")
+	}
+}
+
+// TestKey_Q_DismissesDiffModal verifies q closes the diff modal without
+// quitting the app. We use applyMsg (which ignores the returned Cmd) to avoid
+// blocking on waitForDBEvent.
+func TestKey_Q_DismissesDiffModal(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.diffVisible = true
+
+	m = applyMsg(m, keyRune('q'))
+
+	if m.diffVisible {
+		t.Error("expected diffVisible to be false after q")
+	}
+}
+
+// TestKey_JK_ScrollsDiffModal verifies j/k scroll inside the diff modal and
+// keep the modal open.
+func TestKey_JK_ScrollsDiffModal(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.diffVisible = true
+
+	m = applyMsg(m, keyRune('j'))
+	if !m.diffVisible {
+		t.Error("diff modal should remain visible after j")
+	}
+
+	m = applyMsg(m, keyRune('k'))
+	if !m.diffVisible {
+		t.Error("diff modal should remain visible after k")
+	}
+}
+
+// TestView_DiffOverlay_VisibleWhenOpen verifies View() includes the diff modal
+// content when diffVisible is true.
+func TestView_DiffOverlay_VisibleWhenOpen(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.diffVisible = true
+	m.diffTitle = "owner/repo#99"
+
+	view := m.View()
+	if !strings.Contains(view, "DIFF") {
+		t.Errorf("View() should contain DIFF when diffVisible is true\ngot:\n%s", view)
+	}
+}
+
+// TestView_DiffOverlay_AbsentWhenClosed verifies View() does not include the
+// diff modal when diffVisible is false.
+func TestView_DiffOverlay_AbsentWhenClosed(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+
+	view := m.View()
+	if strings.Contains(view, "DIFF") {
+		t.Errorf("View() should not contain DIFF when diffVisible is false\ngot:\n%s", view)
+	}
+}
+
+// TestWindowSizeMsg_SizesDiffViewport verifies WindowSizeMsg resizes the diff
+// viewport alongside the help viewport.
+func TestWindowSizeMsg_SizesDiffViewport(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+
+	m = applyMsg(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	wantW, wantH := helpViewportSize(120, 40)
+	if m.diffViewport.Width != wantW {
+		t.Errorf("diffViewport.Width = %d, want %d", m.diffViewport.Width, wantW)
+	}
+	if m.diffViewport.Height != wantH {
+		t.Errorf("diffViewport.Height = %d, want %d", m.diffViewport.Height, wantH)
+	}
+}
+
+// TestWithDiffViewer_SetsViewer verifies the fluent setter.
+func TestWithDiffViewer_SetsViewer(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	if m.diffViewer != nil {
+		t.Fatal("expected nil diffViewer by default")
+	}
+	dv := &stubDiffViewer{}
+	m = m.WithDiffViewer(dv)
+	if m.diffViewer != dv {
+		t.Error("expected diffViewer to be set after WithDiffViewer")
+	}
+}
+
+// TestDiffModalView_NoDimensions verifies diffModalView renders without crash
+// when terminal dimensions are zero.
+func TestDiffModalView_NoDimensions(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.diffTitle = "owner/repo#1"
+
+	got := m.diffModalView()
+	if got == "" {
+		t.Error("expected non-empty diff modal view even with zero dimensions")
+	}
+}
+
+// TestDiffModalView_WithDimensions verifies diffModalView renders correctly
+// with known terminal dimensions.
+func TestDiffModalView_WithDimensions(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.width = 80
+	m.height = 24
+	m.diffTitle = "owner/repo#42"
+	m.diffViewport.SetContent("--- a/file\n+++ b/file\n")
+
+	got := m.diffModalView()
+	if !strings.Contains(got, "DIFF owner/repo#42") {
+		t.Errorf("expected diff modal view to contain title, got:\n%s", got)
+	}
+}
+
+// TestDiffModalView_DarkTheme verifies the dark-theme border colour path.
+func TestDiffModalView_DarkTheme(t *testing.T) {
+	sub := &stubSubscriber{}
+	dark := plainTheme()
+	dark.Dark = true
+	m := NewWithTheme("v0.0.0", "testuser", sub,
+		newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false),
+		dark, stubClock{now: t0})
+	m.diffTitle = "owner/repo#1"
+
+	got := m.diffModalView()
+	if got == "" {
+		t.Error("expected non-empty diff modal view with dark theme")
+	}
+}
+
+// TestDiffModalView_ScrollHint verifies the "↓ more" hint appears when the
+// viewport has more content to scroll.
+func TestDiffModalView_ScrollHint(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.width = 80
+	m.height = 24
+	w, h := helpViewportSize(80, 24)
+	m.diffViewport.Width = w
+	m.diffViewport.Height = h
+	m.diffTitle = "owner/repo#1"
+	// Create content much taller than the viewport so there's content to scroll.
+	var lines strings.Builder
+	for i := range 200 {
+		fmt.Fprintf(&lines, "line %d\n", i)
+	}
+	m.diffViewport.SetContent(lines.String())
+
+	got := m.diffModalView()
+	if !strings.Contains(got, "more") {
+		t.Errorf("expected scroll hint in diff modal view, got:\n%s", got)
+	}
+}
+
+// TestKey_D_DiffFetchError_SetsErrorStatus verifies that when the diff viewer
+// returns an error, a CommandResultMsg with the error is produced.
+func TestKey_D_DiffFetchError_SetsErrorStatus(t *testing.T) {
+	pr := &persistence.PullRequest{Repo: "owner/repo", Number: 42, URL: "https://github.com/owner/repo/pull/42"}
+	rq := newSelectorStub("reviewQueue", pr)
+	dv := &stubDiffViewer{showErr: fmt.Errorf("network error")}
+	m, _ := newTestModel(newStub("myPRs", true), rq,
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.focused = PanelReviewQueue
+	m.diffViewer = dv
+
+	_, cmd := m.Update(keyRune('d'))
+	msg := executeBatchCmd(cmd)
+	if msg == nil {
+		t.Fatal("expected a message from the diff fetch cmd")
+	}
+	cr, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if cr.Err == nil || !strings.Contains(cr.Err.Error(), "network error") {
+		t.Errorf("expected network error, got: %v", cr.Err)
 	}
 }

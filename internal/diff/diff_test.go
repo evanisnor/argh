@@ -24,7 +24,7 @@ func TestViewer_ShowDiff_InvalidRepo(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			v := New("token", NewStubDiffFetcher(), NewStubSubprocessRunner(), NewStubBinaryLookup("/usr/bin/delta"))
-			err := v.ShowDiff(tt.repo, 1)
+			_, err := v.ShowDiff(tt.repo, 1)
 			if err == nil || !strings.Contains(err.Error(), "invalid repo") {
 				t.Errorf("expected invalid repo error, got: %v", err)
 			}
@@ -38,7 +38,7 @@ func TestViewer_ShowDiff_FetchError(t *testing.T) {
 		return nil, errors.New("network error")
 	}
 	v := New("token", fetcher, NewStubSubprocessRunner(), NewStubBinaryLookup("/usr/bin/delta"))
-	err := v.ShowDiff("owner/repo", 42)
+	_, err := v.ShowDiff("owner/repo", 42)
 	if err == nil || !strings.Contains(err.Error(), "network error") {
 		t.Errorf("expected fetch error, got: %v", err)
 	}
@@ -50,7 +50,8 @@ func TestViewer_ShowDiff_DeltaPresent(t *testing.T) {
 	lookup := NewStubBinaryLookup("/usr/bin/delta")
 
 	v := New("mytoken", fetcher, runner, lookup)
-	if err := v.ShowDiff("owner/repo", 42); err != nil {
+	content, err := v.ShowDiff("owner/repo", 42)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -71,55 +72,41 @@ func TestViewer_ShowDiff_DeltaPresent(t *testing.T) {
 	if len(runner.Calls[0].Stdin) == 0 {
 		t.Error("expected non-empty stdin passed to delta")
 	}
+	if content == "" {
+		t.Error("expected non-empty content from delta")
+	}
 }
 
 func TestViewer_ShowDiff_DeltaRunError(t *testing.T) {
 	runner := NewStubSubprocessRunner()
-	runner.RunFunc = func(name string, args []string, stdin []byte) error {
-		return errors.New("delta exited with status 1")
+	runner.RunFunc = func(name string, args []string, stdin []byte) ([]byte, error) {
+		return nil, errors.New("delta exited with status 1")
 	}
 	v := New("token", NewStubDiffFetcher(), runner, NewStubBinaryLookup("/usr/bin/delta"))
-	err := v.ShowDiff("owner/repo", 1)
+	_, err := v.ShowDiff("owner/repo", 1)
 	if err == nil || !strings.Contains(err.Error(), "delta exited with status 1") {
 		t.Errorf("expected delta error, got: %v", err)
 	}
 }
 
 func TestViewer_ShowDiff_DeltaNotFound(t *testing.T) {
-	var out strings.Builder
 	v := New("token", NewStubDiffFetcher(), NewStubSubprocessRunner(), NewStubBinaryLookup(""))
-	v.fallbackOut = &out
 
-	if err := v.ShowDiff("owner/repo", 42); err != nil {
+	content, err := v.ShowDiff("owner/repo", 42)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	output := out.String()
-	if !strings.Contains(output, "delta not found") {
-		t.Errorf("expected install hint in output, got: %q", output)
+	if !strings.Contains(content, "delta not found") {
+		t.Errorf("expected install hint in content, got: %q", content)
 	}
-	if !strings.Contains(output, "brew install git-delta") {
-		t.Errorf("expected brew install hint in output, got: %q", output)
+	if !strings.Contains(content, "brew install git-delta") {
+		t.Errorf("expected brew install hint in content, got: %q", content)
 	}
-	// Raw diff content should be present in the fallback output.
-	if !strings.Contains(output, "--- a/file") {
-		t.Errorf("expected raw diff in fallback output, got: %q", output)
+	if !strings.Contains(content, "--- a/file") {
+		t.Errorf("expected raw diff in content, got: %q", content)
 	}
 }
-
-func TestViewer_ShowDiff_FallbackWriteError(t *testing.T) {
-	v := New("token", NewStubDiffFetcher(), NewStubSubprocessRunner(), NewStubBinaryLookup(""))
-	v.fallbackOut = &failWriter{}
-
-	if err := v.ShowDiff("owner/repo", 1); err == nil {
-		t.Error("expected error from failing writer")
-	}
-}
-
-// failWriter always returns an error on Write.
-type failWriter struct{}
-
-func (f *failWriter) Write(p []byte) (int, error) { return 0, errors.New("write failed") }
 
 // ── New ────────────────────────────────────────────────────────────────────────
 
@@ -235,16 +222,19 @@ func (r *failBodyReader) Read(p []byte) (int, error) {
 
 func TestOSRunner_Run_Success(t *testing.T) {
 	r := &osRunner{}
-	// /bin/echo is always present on macOS and exits 0.
-	if err := r.Run("/bin/echo", []string{"hello"}, []byte("stdin data")); err != nil {
+	out, err := r.Run("/bin/echo", []string{"hello"}, []byte("stdin data"))
+	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(out), "hello") {
+		t.Errorf("expected captured output to contain 'hello', got: %q", string(out))
 	}
 }
 
 func TestOSRunner_Run_Error(t *testing.T) {
 	r := &osRunner{}
-	// /bin/false always exits with status 1.
-	if err := r.Run("/bin/false", nil, nil); err == nil {
+	_, err := r.Run("/bin/false", nil, nil)
+	if err == nil {
 		t.Error("expected error from /bin/false")
 	}
 }

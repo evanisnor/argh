@@ -46,9 +46,10 @@ type BrowserOpener interface {
 	Open(url string) error
 }
 
-// DiffViewer shows a diff for a pull request (task 23 — stub for now).
+// DiffViewer fetches and formats a diff for a pull request, returning the
+// rendered content as a string (ANSI-formatted when delta is available).
 type DiffViewer interface {
-	ShowDiff(repo string, number int) error
+	ShowDiff(repo string, number int) (string, error)
 }
 
 // DNDController manages do-not-disturb mode (task 32 — stub for now).
@@ -78,6 +79,12 @@ type CommandResultMsg struct {
 	Err error
 	// Status is a short human-readable description shown in the status bar.
 	Status string
+}
+
+// ShowDiffContentMsg carries rendered diff content to be displayed in a modal.
+type ShowDiffContentMsg struct {
+	Title   string
+	Content string
 }
 
 // WatchChangedMsg is sent when a watch is added or cancelled so the model can
@@ -198,10 +205,14 @@ func (e *CommandExecutor) Execute(cmd string, args []string) tea.Cmd {
 			if e.diff == nil {
 				return CommandResultMsg{Err: fmt.Errorf(":diff: no diff viewer configured")}
 			}
-			if err := e.diff.ShowDiff(pr.Repo, pr.Number); err != nil {
+			content, err := e.diff.ShowDiff(pr.Repo, pr.Number)
+			if err != nil {
 				return CommandResultMsg{Err: err}
 			}
-			return CommandResultMsg{Status: fmt.Sprintf("diff %s#%d", pr.Repo, pr.Number)}
+			return ShowDiffContentMsg{
+				Title:   fmt.Sprintf("%s#%d", pr.Repo, pr.Number),
+				Content: content,
+			}
 		})
 
 	case "approve":
