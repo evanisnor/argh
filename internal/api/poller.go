@@ -45,14 +45,15 @@ func (r *RealTicker) Stop()                  { r.t.Stop() }
 // based on the API rate limit. It supports forced immediate polls via the
 // channel returned by ForcePollCh.
 type Poller struct {
-	myPRs        Fetcher
-	reviewQueue  Fetcher
-	rateLimits   RateLimitReader
-	baseInterval time.Duration
-	newTicker    NewTickerFunc
-	forcePoll    chan struct{}
-	sleepChecker SleepScheduleChecker
-	postFetch    func()
+	myPRs         Fetcher
+	reviewQueue   Fetcher
+	collaborators Fetcher // optional; nil = skip
+	rateLimits    RateLimitReader
+	baseInterval  time.Duration
+	newTicker     NewTickerFunc
+	forcePoll     chan struct{}
+	sleepChecker  SleepScheduleChecker
+	postFetch     func()
 }
 
 // NewPoller constructs a Poller.
@@ -87,6 +88,12 @@ func (p *Poller) ForcePoll() {
 	case p.forcePoll <- struct{}{}:
 	default:
 	}
+}
+
+// SetCollaboratorsFetcher registers an optional fetcher for repository collaborators.
+// Must be called before Start.
+func (p *Poller) SetCollaboratorsFetcher(f Fetcher) {
+	p.collaborators = f
 }
 
 // SetPostFetchHook registers a function that is called after every fetch
@@ -180,5 +187,13 @@ func (p *Poller) fetch(ctx context.Context) error {
 	if err := p.myPRs.Fetch(ctx); err != nil {
 		return err
 	}
-	return p.reviewQueue.Fetch(ctx)
+	if err := p.reviewQueue.Fetch(ctx); err != nil {
+		return err
+	}
+	if p.collaborators != nil {
+		if err := p.collaborators.Fetch(ctx); err != nil {
+			slog.Debug("poller: collaborators fetch failed", "err", err)
+		}
+	}
+	return nil
 }

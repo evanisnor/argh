@@ -121,6 +121,12 @@ type PRDetailReader interface {
 	ListTimelineEvents(prID string) ([]persistence.TimelineEvent, error)
 }
 
+// CollaboratorLister queries distinct known GitHub logins from the database,
+// excluding a specified user. Used to populate the command bar's @-completion.
+type CollaboratorLister interface {
+	ListKnownLogins(excludeLogin string) ([]string, error)
+}
+
 // SubModel is the interface that every panel and pane implements so the root
 // model can delegate Update and View calls uniformly.
 type SubModel interface {
@@ -208,7 +214,8 @@ type Model struct {
 	browser           BrowserOpener  // optional; nil = browser not available
 	dndToggler        DNDToggler     // optional; nil = no DND control
 	detailReader      PRDetailReader // optional; nil = detail pane not populated
-	diffViewer        DiffViewer     // optional; nil = diff not available
+	diffViewer        DiffViewer         // optional; nil = diff not available
+	collabLister      CollaboratorLister // optional; nil = no collaborator completion
 	width             int        // terminal width, 0 until first tea.WindowSizeMsg
 	height            int        // terminal height, 0 until first tea.WindowSizeMsg
 }
@@ -320,6 +327,13 @@ func (m Model) WithDiffViewer(d DiffViewer) Model {
 	return m
 }
 
+// WithCollaboratorLister returns a copy of m with the collaborator lister set.
+// When set, the command bar's @-completion list is populated from known logins.
+func (m Model) WithCollaboratorLister(cl CollaboratorLister) Model {
+	m.collabLister = cl
+	return m
+}
+
 // waitForDBEvent returns a Cmd that blocks until the next event arrives on ch,
 // then wraps it in a DBEventMsg.
 func waitForDBEvent(ch <-chan eventbus.Event) tea.Cmd {
@@ -328,9 +342,27 @@ func waitForDBEvent(ch <-chan eventbus.Event) tea.Cmd {
 	}
 }
 
+// refreshCollaborators queries the database for known logins and returns a Cmd
+// that produces a CollaboratorsUpdatedMsg. Returns nil if no lister is configured.
+func (m Model) refreshCollaborators() tea.Cmd {
+	if m.collabLister == nil {
+		return nil
+	}
+	cl := m.collabLister
+	username := m.username
+	return func() tea.Msg {
+		logins, err := cl.ListKnownLogins(username)
+		if err != nil {
+			slog.Debug("refreshCollaborators: query failed", "err", err)
+			return nil
+		}
+		return CollaboratorsUpdatedMsg{Logins: logins}
+	}
+}
+
 // Init starts the event bus listener.
 func (m Model) Init() tea.Cmd {
-	return waitForDBEvent(m.eventCh)
+	return tea.Batch(waitForDBEvent(m.eventCh), m.refreshCollaborators())
 }
 
 // Update dispatches incoming messages to the correct sub-model and re-arms the
@@ -424,6 +456,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commandBar, cmd = m.commandBar.Update(ev)
 		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
 
+	case CollaboratorsUpdatedMsg:
+		var cmd tea.Cmd
+		m.commandBar, cmd = m.commandBar.Update(ev)
+		return m, cmd
+
 	default:
 		// Forward unrecognised messages to all sub-models.
 		var cmds []tea.Cmd
@@ -446,7 +483,7 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		var c1, c2 tea.Cmd
 		m.myPRs, c1 = m.myPRs.Update(DBEventMsg{Event: e})
 		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
-		cmds = append(cmds, c1, c2)
+		cmds = append(cmds, c1, c2, m.refreshCollaborators())
 		m.statusText = statusTextForEvent(e)
 		m.statusEventType = e.Type
 		m.lastEventTime = m.clock.Now()
@@ -464,7 +501,7 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		var c1, c2 tea.Cmd
 		m.myPRs, c1 = m.myPRs.Update(DBEventMsg{Event: e})
 		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
-		cmds = append(cmds, c1, c2)
+		cmds = append(cmds, c1, c2, m.refreshCollaborators())
 		m.statusText = statusTextForEvent(e)
 		m.statusEventType = e.Type
 		m.lastEventTime = m.clock.Now()
@@ -490,7 +527,7 @@ func (m Model) handleDBEvent(e eventbus.Event) (tea.Model, tea.Cmd) {
 		var c1, c2 tea.Cmd
 		m.myPRs, c1 = m.myPRs.Update(DBEventMsg{Event: e})
 		m.reviewQueue, c2 = m.reviewQueue.Update(DBEventMsg{Event: e})
-		cmds = append(cmds, c1, c2)
+		cmds = append(cmds, c1, c2, m.refreshCollaborators())
 
 	case eventbus.RateLimitWarning:
 		m.statusText = "⚠ API rate limit low"
@@ -706,9 +743,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/", ":":
 		slog.Debug("model.handleKey: activating command bar", "key", msg.String())
 		m.commandBarFocused = true
-		var cmd tea.Cmd
-		m.commandBar, cmd = m.commandBar.Update(FocusCommandBarMsg{})
-		return m, tea.Batch(cmd, waitForDBEvent(m.eventCh))
+		var focusCmd tea.Cmd
+		m.commandBar, focusCmd = m.commandBar.Update(FocusCommandBarMsg{})
+		// Forward the key so it appears in the textinput (e.g. ":" is typed).
+		var keyCmd tea.Cmd
+		m.commandBar, keyCmd = m.commandBar.Update(msg)
+		return m, tea.Batch(focusCmd, keyCmd, waitForDBEvent(m.eventCh))
 
 	case "esc":
 		if m.commandBarFocused {

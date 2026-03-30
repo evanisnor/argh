@@ -615,3 +615,92 @@ func TestPoller_PostFetchHook_NilHookDoesNotPanic(t *testing.T) {
 	_, cancel, _, done := startPoller(t, NewStubFetcher(), NewStubFetcher(), rl, time.Second)
 	defer func() { cancel(); <-done }()
 }
+
+// ── Collaborators fetcher tests ─────────────────────────────────────────────
+
+func TestPoller_SetCollaboratorsFetcher(t *testing.T) {
+	calls := make(chan string, 10)
+	collabFetcher := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		calls <- "collaborators"
+		return nil
+	}}
+	myPRs := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		calls <- "myPRs"
+		return nil
+	}}
+	reviewQueue := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		calls <- "reviewQueue"
+		return nil
+	}}
+
+	rl := NewStubRateLimitReader(5000)
+	tickerCh := make(chan *FakeTicker, 1)
+	p := NewPoller(myPRs, reviewQueue, rl, time.Second, func(d time.Duration) Ticker {
+		ft := NewFakeTicker(d)
+		tickerCh <- ft
+		return ft
+	})
+	p.SetCollaboratorsFetcher(collabFetcher)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := p.Start(ctx)
+	defer func() { cancel(); <-done }()
+
+	select {
+	case <-tickerCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+
+	// Initial fetch should call all three fetchers.
+	received := map[string]bool{}
+	timeout := time.After(200 * time.Millisecond)
+	for len(received) < 3 {
+		select {
+		case name := <-calls:
+			received[name] = true
+		case <-timeout:
+			t.Fatalf("fetchers called: %v; expected myPRs, reviewQueue, collaborators", received)
+		}
+	}
+	if !received["collaborators"] {
+		t.Error("collaborators fetcher was not called")
+	}
+}
+
+func TestPoller_CollaboratorsFetchError_DoesNotFailCycle(t *testing.T) {
+	collabFetcher := &StubFetcher{FetchFunc: func(_ context.Context) error {
+		return errors.New("collab error")
+	}}
+
+	hookCalled := make(chan struct{}, 10)
+
+	rl := NewStubRateLimitReader(5000)
+	tickerCh := make(chan *FakeTicker, 1)
+	p := NewPoller(NewStubFetcher(), NewStubFetcher(), rl, time.Second, func(d time.Duration) Ticker {
+		ft := NewFakeTicker(d)
+		tickerCh <- ft
+		return ft
+	})
+	p.SetCollaboratorsFetcher(collabFetcher)
+	p.SetPostFetchHook(func() {
+		hookCalled <- struct{}{}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := p.Start(ctx)
+	defer func() { cancel(); <-done }()
+
+	select {
+	case <-tickerCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ticker not created in time")
+	}
+
+	// Hook should still fire even though collaborators fetch errored.
+	select {
+	case <-hookCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("postFetch hook was not called — collaborator error should not fail cycle")
+	}
+}

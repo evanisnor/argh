@@ -113,6 +113,13 @@ type ReviewSuggestionsMsg struct {
 	InputPrefix string
 }
 
+// CollaboratorsUpdatedMsg is sent when the known-collaborators list changes
+// (e.g. after a DB event introduces new people). The command bar uses this
+// to update its @-completion candidates.
+type CollaboratorsUpdatedMsg struct {
+	Logins []string
+}
+
 // ── CommandExecutor ───────────────────────────────────────────────────────────
 
 // CommandExecutor dispatches parsed command-bar input to the appropriate

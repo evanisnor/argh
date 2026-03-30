@@ -342,6 +342,7 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 	var (
 		myPRsFetcher  api.Fetcher
 		reviewFetcher api.Fetcher
+		collabFetcher api.Fetcher // optional; nil for gh-cli backends
 		rateLimiter   api.RateLimitReader
 		mutator       ui.PRMutator
 		resolver      ui.ThreadResolver
@@ -355,6 +356,7 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 
 		myPRsFetcher = ghcli.NewGHCLIMyPRsFetcher(runner, db, bus, creds.Login)
 		reviewFetcher = ghcli.NewGHCLIReviewQueueFetcher(runner, db, bus, creds.Login)
+		collabFetcher = ghcli.NewGHCLICollaboratorsFetcher(runner, db)
 		rateLimiter = &ghcli.FixedRateLimitReader{}
 		mutator = ghMutator
 		resolver = ghMutator
@@ -380,6 +382,7 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 		resolver = apiMutator
 		actionExec = apiMutator
 		diffViewer = diff.New(creds.Token, diff.NewHTTPFetcher(httpClient), nil, nil)
+		collabFetcher = api.NewCollaboratorsFetcher(restClient.Repositories, db)
 	}
 
 	// ── Poller ───────────────────────────────────────────────────────────────
@@ -394,6 +397,9 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 	}
 	poller := api.NewPoller(myPRsFetcher, reviewFetcher, rateLimiter,
 		pollInterval, newTicker)
+	if collabFetcher != nil {
+		poller.SetCollaboratorsFetcher(collabFetcher)
+	}
 	if len(cfg.SleepSchedule.Windows) > 0 {
 		sleep := api.NewSleepSchedule(cfg.SleepSchedule.Windows,
 			cfg.SleepSchedule.PollInterval.Duration, api.RealClock{})
@@ -467,7 +473,8 @@ func runTUI(parentCtx context.Context, version string, deps tuiDeps) error {
 		WithBrowser(&osBrowserOpener{}).
 		WithDNDToggler(dnd).
 		WithDetailReader(db).
-		WithDiffViewer(diffViewer)
+		WithDiffViewer(diffViewer).
+		WithCollaboratorLister(db)
 
 	// ── Launch background goroutines ─────────────────────────────────────────
 

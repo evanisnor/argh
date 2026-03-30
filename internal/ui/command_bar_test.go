@@ -928,6 +928,138 @@ func TestCommandBar_ReviewSuggestionsMsg_EmptySuggestions(t *testing.T) {
 	}
 }
 
+// ── CollaboratorsUpdatedMsg ───────────────────────────────────────────────────
+
+func TestCommandBar_CollaboratorsUpdatedMsg_UpdatesList(t *testing.T) {
+	cb := NewCommandBar()
+	sm, _ := cb.Update(CollaboratorsUpdatedMsg{Logins: []string{"alice", "bob"}})
+	cb = sm.(*CommandBar)
+
+	if len(cb.collaborators) != 2 {
+		t.Fatalf("expected 2 collaborators, got %v", cb.collaborators)
+	}
+	if cb.collaborators[0] != "alice" || cb.collaborators[1] != "bob" {
+		t.Errorf("collaborators = %v, want [alice bob]", cb.collaborators)
+	}
+}
+
+func TestCommandBar_CollaboratorsUpdatedMsg_RefreshesSuggestionsWhenFocused(t *testing.T) {
+	cb := NewCommandBar()
+	cb.SetPRRefs(samplePRRefs())
+	cb.focused = true
+
+	// Enter collaborator mode first.
+	cb.input.SetValue(":request #42 @al")
+	cb.refreshSuggestions()
+	if len(cb.suggestions) != 0 {
+		t.Fatalf("expected no suggestions before update, got %v", cb.suggestions)
+	}
+
+	// Now update collaborators — suggestions should refresh because bar is focused.
+	sm, _ := cb.Update(CollaboratorsUpdatedMsg{Logins: []string{"alice", "alan", "bob"}})
+	cb = sm.(*CommandBar)
+
+	if cb.mode != cbModeCollaborator {
+		t.Fatalf("expected collaborator mode, got %d", cb.mode)
+	}
+	if len(cb.suggestions) != 2 {
+		t.Fatalf("expected 2 suggestions (alice, alan), got %v", cb.suggestions)
+	}
+}
+
+func TestCommandBar_CollaboratorsUpdatedMsg_DoesNotRefreshWhenUnfocused(t *testing.T) {
+	cb := NewCommandBar()
+	// Unfocused command bar with empty input — updating collaborators should
+	// NOT populate suggestions (which would show the command name list).
+	sm, _ := cb.Update(CollaboratorsUpdatedMsg{Logins: []string{"alice", "bob"}})
+	cb = sm.(*CommandBar)
+
+	if len(cb.suggestions) != 0 {
+		t.Errorf("expected no suggestions when unfocused, got %v", cb.suggestions)
+	}
+	if len(cb.collaborators) != 2 {
+		t.Errorf("collaborators should still be set, got %v", cb.collaborators)
+	}
+}
+
+func TestCommandBar_CollaboratorsUpdatedMsg_DoesNotChangeFocus(t *testing.T) {
+	cb := NewCommandBar()
+	if cb.focused {
+		t.Fatal("precondition: command bar should not be focused")
+	}
+
+	sm, _ := cb.Update(CollaboratorsUpdatedMsg{Logins: []string{"alice"}})
+	cb = sm.(*CommandBar)
+
+	if cb.focused {
+		t.Error("CollaboratorsUpdatedMsg should not change focus state")
+	}
+}
+
+// ── End-to-end collaborator flow ──────────────────────────────────────────────
+
+func TestCommandBar_CollaboratorFlow_EndToEnd(t *testing.T) {
+	cb := NewCommandBar()
+	cb.SetPRRefs(samplePRRefs())
+	cb.SetCollaborators([]string{"alice", "bob", "charlie"})
+	focusBar(t, cb)
+
+	// Step 1: type ":request" and accept via tab.
+	typeInto(t, cb, ":request")
+	if cb.mode != cbModeCommand {
+		t.Fatalf("step1: expected command mode, got %d", cb.mode)
+	}
+	pressKey(t, cb, "tab")
+	if !strings.HasPrefix(cb.Value(), ":request ") {
+		t.Fatalf("step1: expected ':request ' after tab, got %q", cb.Value())
+	}
+
+	// Step 2: in PR mode, accept a PR suggestion.
+	if cb.mode != cbModePR {
+		t.Fatalf("step2: expected PR mode, got %d", cb.mode)
+	}
+	if len(cb.suggestions) == 0 {
+		t.Fatal("step2: expected PR suggestions")
+	}
+	pressKey(t, cb, "enter") // accept top PR suggestion
+
+	// Step 3: type "@" — collaborator suggestions should appear.
+	typeInto(t, cb, "@")
+	if cb.mode != cbModeCollaborator {
+		t.Fatalf("step3: expected collaborator mode, got %d", cb.mode)
+	}
+	if len(cb.suggestions) != 3 {
+		t.Fatalf("step3: expected 3 collaborator suggestions, got %d: %v", len(cb.suggestions), cb.suggestions)
+	}
+
+	// Step 4: type "al" to fuzzy filter — should narrow to "alice".
+	typeInto(t, cb, "al")
+	if cb.mode != cbModeCollaborator {
+		t.Fatalf("step4: expected collaborator mode, got %d", cb.mode)
+	}
+	if len(cb.suggestions) == 0 {
+		t.Fatal("step4: expected at least one collaborator suggestion after typing 'al'")
+	}
+	found := false
+	for _, s := range cb.suggestions {
+		if s == "alice" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("step4: expected 'alice' in suggestions, got %v", cb.suggestions)
+	}
+
+	// Step 5: SuggestionsView should render the list.
+	sv := cb.SuggestionsView()
+	if sv == "" {
+		t.Error("step5: expected non-empty SuggestionsView()")
+	}
+	if !strings.Contains(sv, "alice") {
+		t.Errorf("step5: expected 'alice' in SuggestionsView(), got %q", sv)
+	}
+}
+
 // ── SetExecutor / executor dispatch ───────────────────────────────────────────
 
 type stubDispatcher struct {

@@ -338,6 +338,160 @@ func TestCommandBarSuggestionsView_NonOverlaySubModel(t *testing.T) {
 	}
 }
 
+// TestRealCommandBar_CollaboratorSuggestionsInView uses a real CommandBar in
+// the Model to verify the full rendering path: collaborators are set, the bar
+// is focused, `:request g @` is typed, and the suggestion overlay appears in View().
+func TestRealCommandBar_CollaboratorSuggestionsInView(t *testing.T) {
+	cb := NewCommandBar()
+	cb.SetPRRefs([]PRRef{{SessionID: "g", Number: 42, Title: "Fix login bug", Repo: "owner/repo"}})
+	cb.SetCollaborators([]string{"alice", "bob", "charlie"})
+
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cb,
+	)
+	m.width = 80
+	m.height = 30
+
+	// Focus the command bar via ":" key.
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	if !m.commandBarFocused {
+		t.Fatal("command bar should be focused after ':'")
+	}
+
+	// Type "request" and accept with tab → ":request "
+	for _, r := range "request" {
+		m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	// Type "g" and accept with tab → ":request g "
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	// Type "@" to enter collaborator mode.
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+
+	// Verify the command bar has suggestions.
+	realCB := m.commandBar.(*CommandBar)
+	if realCB.mode != cbModeCollaborator {
+		t.Fatalf("expected cbModeCollaborator, got %d; input=%q suggestions=%v collaborators=%v",
+			realCB.mode, realCB.Value(), realCB.suggestions, realCB.collaborators)
+	}
+	if len(realCB.suggestions) == 0 {
+		t.Fatalf("expected non-empty suggestions, got none; collaborators=%v input=%q",
+			realCB.collaborators, realCB.Value())
+	}
+
+	// Verify the suggestions appear in the rendered View().
+	view := m.View()
+	if !strings.Contains(view, "alice") {
+		t.Errorf("View() should contain collaborator 'alice' in suggestion overlay\ninput=%q\nsuggestions=%v\nview:\n%s",
+			realCB.Value(), realCB.suggestions, view)
+	}
+}
+
+// TestRealCommandBar_CollaboratorsViaMsg verifies that collaborators delivered
+// through CollaboratorsUpdatedMsg (the production path) are available for
+// @-completion when the user subsequently focuses the command bar.
+func TestRealCommandBar_CollaboratorsViaMsg(t *testing.T) {
+	cb := NewCommandBar()
+	cb.SetPRRefs([]PRRef{{SessionID: "g", Number: 42, Title: "Fix login bug", Repo: "owner/repo"}})
+
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cb,
+	)
+	m.width = 80
+	m.height = 30
+
+	// Deliver collaborators through the message path (same as production).
+	m = applyMsg(m, CollaboratorsUpdatedMsg{Logins: []string{"alice", "bob", "charlie"}})
+
+	// Verify the command bar received them.
+	realCB := m.commandBar.(*CommandBar)
+	if len(realCB.collaborators) != 3 {
+		t.Fatalf("expected 3 collaborators after msg delivery, got %d: %v", len(realCB.collaborators), realCB.collaborators)
+	}
+
+	// Now focus and type the command sequence.
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	for _, r := range "request" {
+		m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+
+	realCB = m.commandBar.(*CommandBar)
+	if realCB.mode != cbModeCollaborator {
+		t.Fatalf("expected cbModeCollaborator, got %d; input=%q", realCB.mode, realCB.Value())
+	}
+	if len(realCB.suggestions) == 0 {
+		t.Fatalf("expected suggestions after @, got none; input=%q collaborators=%v", realCB.Value(), realCB.collaborators)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "alice") {
+		t.Errorf("View() should contain 'alice' in suggestion overlay\nview:\n%s", view)
+	}
+}
+
+// TestRealCommandBar_ManualTyping_ColonForwardedToInput verifies that pressing
+// `:` both focuses the command bar AND types the colon into the input, so the
+// user can type `:request g @` without needing to tab-accept the command.
+func TestRealCommandBar_ManualTyping_ColonForwardedToInput(t *testing.T) {
+	cb := NewCommandBar()
+	cb.SetPRRefs([]PRRef{{SessionID: "g", Number: 42, Title: "Fix login bug", Repo: "owner/repo"}})
+	cb.SetCollaborators([]string{"alice", "bob", "charlie"})
+
+	m, _ := newTestModel(
+		newStub("myPRs", true),
+		newStub("reviewQueue", true),
+		newStub("watches", false),
+		newStub("detail", false),
+		cb,
+	)
+	m.width = 80
+	m.height = 30
+
+	// Press ":" to focus the command bar — the colon should also be typed.
+	m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+
+	realCB := m.commandBar.(*CommandBar)
+	if realCB.Value() != ":" {
+		t.Fatalf("expected ':' in input after pressing ':', got %q", realCB.Value())
+	}
+
+	// Type the rest manually: "request g @".
+	for _, r := range "request g @" {
+		m = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	realCB = m.commandBar.(*CommandBar)
+	if realCB.Value() != ":request g @" {
+		t.Fatalf("expected ':request g @', got %q", realCB.Value())
+	}
+	if realCB.mode != cbModeCollaborator {
+		t.Fatalf("expected cbModeCollaborator, got %d", realCB.mode)
+	}
+	if len(realCB.suggestions) == 0 {
+		t.Fatal("expected collaborator suggestions")
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "alice") {
+		t.Errorf("View() should contain 'alice' in suggestion overlay\nview:\n%s", view)
+	}
+}
+
 // TestDBEvent_PRUpdated_DispatchesToMyPRsAndReviewQueue verifies that a
 // PRUpdated bus event is forwarded to both the My PRs and Review Queue panels.
 func TestDBEvent_PRUpdated_DispatchesToMyPRsAndReviewQueue(t *testing.T) {
@@ -1568,15 +1722,15 @@ func TestKey_JK_DispatchMoveFocusToFocusedPanel(t *testing.T) {
 	}
 }
 
-// TestKey_SlashAndColon_FocusCommandBar verifies / and : set commandBarFocused
-// and send FocusCommandBarMsg to the command bar.
+// TestKey_SlashAndColon_FocusCommandBar verifies / and : set commandBarFocused,
+// send FocusCommandBarMsg, and forward the key to the command bar.
 func TestKey_SlashAndColon_FocusCommandBar(t *testing.T) {
 	for _, key := range []tea.KeyMsg{keyRune('/'), keyRune(':')} {
 		t.Run(key.String(), func(t *testing.T) {
-			cmdBar := newStub("cmdBar", false)
+			cb := NewCommandBar()
 			m, _ := newTestModel(
 				newStub("myPRs", true), newStub("reviewQueue", true),
-				newStub("watches", false), newStub("detail", false), cmdBar,
+				newStub("watches", false), newStub("detail", false), cb,
 			)
 
 			m = applyMsg(m, key)
@@ -1584,9 +1738,12 @@ func TestKey_SlashAndColon_FocusCommandBar(t *testing.T) {
 			if !m.commandBarFocused {
 				t.Error("commandBarFocused should be true after pressing", key.String())
 			}
-			if _, ok := m.commandBar.(*stubSubModel).lastMsg.(FocusCommandBarMsg); !ok {
-				t.Errorf("commandBar should receive FocusCommandBarMsg, got %T",
-					m.commandBar.(*stubSubModel).lastMsg)
+			realCB := m.commandBar.(*CommandBar)
+			if !realCB.focused {
+				t.Error("command bar should be focused")
+			}
+			if realCB.Value() != key.String() {
+				t.Errorf("expected %q typed into input, got %q", key.String(), realCB.Value())
 			}
 		})
 	}
@@ -3285,5 +3442,202 @@ func TestKey_D_DiffFetchError_SetsErrorStatus(t *testing.T) {
 	}
 	if cr.Err == nil || !strings.Contains(cr.Err.Error(), "network error") {
 		t.Errorf("expected network error, got: %v", cr.Err)
+	}
+}
+
+// ── Collaborator refresh tests ───────────────────────────────────────────────
+
+// stubCollabLister implements CollaboratorLister for tests.
+type stubCollabLister struct {
+	logins []string
+	err    error
+	calls  int
+}
+
+func (s *stubCollabLister) ListKnownLogins(exclude string) ([]string, error) {
+	s.calls++
+	return s.logins, s.err
+}
+
+// findCollabMsg recursively executes a tea.Cmd and returns the first
+// CollaboratorsUpdatedMsg found, or nil. Commands that block (e.g.
+// waitForDBEvent) are abandoned after a short timeout.
+func findCollabMsg(cmd tea.Cmd) *CollaboratorsUpdatedMsg {
+	if cmd == nil {
+		return nil
+	}
+	ch := make(chan tea.Msg, 1)
+	go func() { ch <- cmd() }()
+	select {
+	case msg := <-ch:
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if found := findCollabMsg(tea.Cmd(c)); found != nil {
+					return found
+				}
+			}
+			return nil
+		}
+		if cu, ok := msg.(CollaboratorsUpdatedMsg); ok {
+			return &cu
+		}
+		return nil
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+}
+
+func TestWithCollaboratorLister_SetsLister(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	if m.collabLister != nil {
+		t.Fatal("expected nil collabLister by default")
+	}
+	cl := &stubCollabLister{}
+	m = m.WithCollaboratorLister(cl)
+	if m.collabLister != cl {
+		t.Error("expected collabLister to be set after WithCollaboratorLister")
+	}
+}
+
+func TestRefreshCollaborators_NilLister_ReturnsNil(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cmd := m.refreshCollaborators()
+	if cmd != nil {
+		t.Error("expected nil cmd when collabLister is nil")
+	}
+}
+
+func TestRefreshCollaborators_ReturnsCollaboratorsUpdatedMsg(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cl := &stubCollabLister{logins: []string{"alice", "bob"}}
+	m = m.WithCollaboratorLister(cl)
+
+	cmd := m.refreshCollaborators()
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd")
+	}
+	msg := cmd()
+	cu, ok := msg.(CollaboratorsUpdatedMsg)
+	if !ok {
+		t.Fatalf("expected CollaboratorsUpdatedMsg, got %T", msg)
+	}
+	if len(cu.Logins) != 2 || cu.Logins[0] != "alice" || cu.Logins[1] != "bob" {
+		t.Errorf("Logins = %v, want [alice bob]", cu.Logins)
+	}
+}
+
+func TestRefreshCollaborators_ErrorReturnsNilMsg(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cl := &stubCollabLister{err: fmt.Errorf("db error")}
+	m = m.WithCollaboratorLister(cl)
+
+	cmd := m.refreshCollaborators()
+	msg := cmd()
+	if msg != nil {
+		t.Errorf("expected nil msg on error, got %T", msg)
+	}
+}
+
+func TestInit_IncludesRefreshCollaborators(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cl := &stubCollabLister{logins: []string{"alice"}}
+	m = m.WithCollaboratorLister(cl)
+
+	cmd := m.Init()
+	found := findCollabMsg(cmd)
+	if found == nil {
+		t.Fatal("Init() batch should include CollaboratorsUpdatedMsg")
+	}
+	if len(found.Logins) != 1 || found.Logins[0] != "alice" {
+		t.Errorf("Logins = %v, want [alice]", found.Logins)
+	}
+}
+
+func TestDBEvent_PRUpdated_TriggersCollaboratorRefresh(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cl := &stubCollabLister{logins: []string{"alice"}}
+	m = m.WithCollaboratorLister(cl)
+
+	e := eventbus.Event{Type: eventbus.PRUpdated, After: "some-pr"}
+	_, cmd := m.Update(DBEventMsg{Event: e})
+
+	found := findCollabMsg(cmd)
+	if found == nil {
+		t.Fatal("PRUpdated should trigger collaborator refresh")
+	}
+}
+
+func TestDBEvent_ReviewChanged_TriggersCollaboratorRefresh(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cl := &stubCollabLister{logins: []string{"alice"}}
+	m = m.WithCollaboratorLister(cl)
+
+	e := eventbus.Event{Type: eventbus.ReviewChanged}
+	_, cmd := m.Update(DBEventMsg{Event: e})
+
+	found := findCollabMsg(cmd)
+	if found == nil {
+		t.Fatal("ReviewChanged should trigger collaborator refresh")
+	}
+}
+
+func TestDBEvent_SessionIDsAssigned_TriggersCollaboratorRefresh(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cl := &stubCollabLister{logins: []string{"alice"}}
+	m = m.WithCollaboratorLister(cl)
+
+	e := eventbus.Event{Type: eventbus.SessionIDsAssigned}
+	_, cmd := m.Update(DBEventMsg{Event: e})
+
+	found := findCollabMsg(cmd)
+	if found == nil {
+		t.Fatal("SessionIDsAssigned should trigger collaborator refresh")
+	}
+}
+
+func TestDBEvent_CIChanged_DoesNotTriggerCollaboratorRefresh(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	cl := &stubCollabLister{logins: []string{"alice"}}
+	m = m.WithCollaboratorLister(cl)
+
+	e := eventbus.Event{Type: eventbus.CIChanged}
+	_, cmd := m.Update(DBEventMsg{Event: e})
+
+	found := findCollabMsg(cmd)
+	if found != nil {
+		t.Error("CIChanged should NOT trigger collaborator refresh")
+	}
+}
+
+func TestModel_CollaboratorsUpdatedMsg_ForwardedToCommandBar(t *testing.T) {
+	cmdBar := newStub("cmdBar", false)
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), cmdBar)
+
+	msg := CollaboratorsUpdatedMsg{Logins: []string{"alice", "bob"}}
+	m = applyMsg(m, msg)
+
+	if _, ok := cmdBar.lastMsg.(CollaboratorsUpdatedMsg); !ok {
+		t.Errorf("command bar did not receive CollaboratorsUpdatedMsg; lastMsg = %T", cmdBar.lastMsg)
+	}
+}
+
+func TestModel_CollaboratorsUpdatedMsg_DoesNotFocusCommandBar(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+
+	m = applyMsg(m, CollaboratorsUpdatedMsg{Logins: []string{"alice"}})
+
+	if m.commandBarFocused {
+		t.Error("CollaboratorsUpdatedMsg should not focus the command bar")
 	}
 }

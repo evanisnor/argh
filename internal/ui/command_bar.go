@@ -154,12 +154,20 @@ func (c *CommandBar) Update(msg tea.Msg) (SubModel, tea.Cmd) {
 		// can select reviewers from the ranked list via @-completion.
 		c.collaborators = m.Suggestions
 		c.input.SetValue(m.InputPrefix)
+		c.input.CursorEnd()
 		c.focused = true
 		focusCmd := c.input.Focus()
 		c.histCursor = -1
 		c.savedInput = ""
 		c.refreshSuggestions()
 		return c, focusCmd
+
+	case CollaboratorsUpdatedMsg:
+		c.collaborators = m.Logins
+		if c.focused {
+			c.refreshSuggestions()
+		}
+		return c, nil
 
 	case tea.KeyMsg:
 		if !c.focused {
@@ -252,6 +260,7 @@ func (c *CommandBar) acceptTopSuggestion() {
 			c.input.SetValue(val[:atIdx] + "@" + top + " ")
 		}
 	}
+	c.input.CursorEnd()
 	c.refreshSuggestions()
 }
 

@@ -2055,3 +2055,80 @@ tasks:
     testing: >
       TestMyPRsPanel_DraftRendering still verifies the title text and "draft"
       status column. 100% coverage maintained.
+
+  # ─── Phase 29: Fuzzy Search for People in :request Command ──────────────────
+
+  - id: 128
+    title: "Fuzzy search for people in :request command"
+    status: done
+    depends_on: [21, 4]
+    description: >
+      Add fuzzy search for GitHub usernames when typing @ in the :request command.
+      Changes span multiple layers:
+      (1) Persistence: add collaborators table (repo, login PK), ListKnownLogins()
+      combining PR authors + reviewers + timeline actors + collaborators, ReplaceCollaborators(),
+      UpsertCollaborator(), ListDistinctRepos().
+      (2) API: CollaboratorsFetcher implementing Fetcher — discovers repos from DB,
+      fetches collaborators via GitHub REST ListCollaborators with pagination, handles
+      403 gracefully, stores via ReplaceCollaborators. Wired into Poller as optional
+      third fetcher (PAT backend only, nil for gh-cli).
+      (3) UI: CollaboratorsUpdatedMsg message type. CommandBar handles it to update
+      collaborator list (guarded by focus check to prevent suggestions on launch).
+      Model adds CollaboratorLister interface, refreshCollaborators() tea.Cmd,
+      reactive refresh on PRUpdated/ReviewChanged/SessionIDsAssigned events,
+      initial load in Init(). WithCollaboratorLister(db) wired in main.go.
+    testing: >
+      Persistence: ListKnownLogins combines all sources, deduplicates, excludes login,
+      empty DB, query error. ReplaceCollaborators insert+replace, delete/insert errors.
+      UpsertCollaborator duplicate no-op. ListDistinctRepos empty/multiple/scan error.
+      API: FetchesAndStores, MultipleRepos, 403 skips, API error skips, ListReposError,
+      EmptyRepos, FiltersEmptyLogins, StoreError continues, InvalidRepoFormat skips,
+      Pagination. Poller: SetCollaboratorsFetcher called, error doesn't fail cycle.
+      UI CommandBar: msg updates list, refreshes when focused, no refresh when unfocused,
+      no focus change. UI Model: Init includes refresh, PRUpdated/ReviewChanged/
+      SessionIDsAssigned trigger refresh, CIChanged does not, msg forwarded to command
+      bar, nil lister safe, error returns nil msg. 100% coverage on all new code.
+
+  - id: 129
+    title: "Fix collaborator suggestions not appearing in :request command"
+    status: done
+    depends_on: [128]
+    description: >
+      Two bugs prevented @-completion from working:
+      (1) Cursor position: textinput.SetValue() does not move cursor to end when
+      the position is still valid within the new value. After accepting a PR suggestion,
+      the cursor stayed at position 8 (end of ":request"), so typing "@" inserted it
+      mid-string producing ":request@ a " instead of ":request a @". Fix: call
+      CursorEnd() after SetValue in acceptTopSuggestion() and ReviewSuggestionsMsg.
+      (2) Empty collaborator data: gh-cli auth had no CollaboratorsFetcher (collabFetcher
+      was nil), so the collaborators table was never populated. Combined with gh-cli
+      fetchers not populating reviewers/timeline_events tables, ListKnownLogins returned
+      empty. Fix: add GHCLICollaboratorsFetcher in internal/ghcli/collaborators.go that
+      calls gh api repos/{owner}/{repo}/collaborators --paginate, and wire it in the
+      gh-cli branch of main.go.
+    testing: >
+      UI: TestCommandBar_CollaboratorFlow_EndToEnd simulates full user flow (type
+      :request, accept, accept PR, type @, verify collaborator suggestions appear).
+      Model integration: TestRealCommandBar_CollaboratorSuggestionsInView,
+      TestRealCommandBar_CollaboratorsViaMsg, TestRealCommandBar_ManualTyping_ColonForwardedToInput
+      verify the full rendering path with real CommandBar in Model.
+      GHCLI: 10 tests covering happy path, multiple repos, invalid repo format, API
+      error, 403 forbidden, empty response, ListReposError, store error, empty login
+      filter, invalid JSON. 100% coverage on collaborators.go.
+
+  - id: 130
+    title: "Forward activating key (: or /) to command bar input"
+    status: done
+    depends_on: [129]
+    description: >
+      Pressing : or / to activate the command bar consumed the key — it focused the
+      bar but never typed the character into the textinput. This meant the input was
+      "request g @" (no colon) and findCommandDef("request") returned nil, preventing
+      collaborator mode. Fix: after sending FocusCommandBarMsg, also forward the
+      original tea.KeyMsg to the command bar so the activating character appears in
+      the input.
+    testing: >
+      TestKey_SlashAndColon_FocusCommandBar updated to use real CommandBar and verify
+      both focus and key typing. TestRealCommandBar_ManualTyping_ColonForwardedToInput
+      verifies end-to-end flow: press :, type "request g @", verify collaborator mode
+      activates and suggestions appear in View().

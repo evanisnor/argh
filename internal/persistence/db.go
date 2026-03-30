@@ -190,6 +190,12 @@ CREATE TABLE IF NOT EXISTS rate_limit (
     reset_at  DATETIME NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS collaborators (
+    repo  TEXT NOT NULL,
+    login TEXT NOT NULL,
+    PRIMARY KEY (repo, login)
+);
+
 CREATE TABLE IF NOT EXISTS etags (
     url           TEXT NOT NULL PRIMARY KEY,
     etag          TEXT NOT NULL DEFAULT '',
@@ -445,6 +451,78 @@ func scanLogins(rows *sql.Rows) ([]string, error) {
 		logins = append(logins, login)
 	}
 	return logins, rows.Err()
+}
+
+// ListKnownLogins returns all distinct GitHub logins known to argh, collected
+// from PR authors, reviewers, and timeline event actors. The excludeLogin
+// parameter (typically the authenticated user) is omitted from results.
+// Results are ordered alphabetically.
+func (d *DB) ListKnownLogins(excludeLogin string) ([]string, error) {
+	rows, err := d.db.Query(`
+		SELECT DISTINCT login FROM (
+			SELECT author AS login FROM pull_requests
+			UNION
+			SELECT login FROM reviewers
+			UNION
+			SELECT actor AS login FROM timeline_events
+			UNION
+			SELECT login FROM collaborators
+		)
+		WHERE login != ?
+		ORDER BY login
+	`, excludeLogin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanLogins(rows)
+}
+
+// ── Collaborators ─────────────────────────────────────────────────────────────
+
+// UpsertCollaborator inserts or updates a collaborator for a repository.
+func (d *DB) UpsertCollaborator(repo, login string) error {
+	_, err := d.db.Exec(`
+		INSERT INTO collaborators (repo, login) VALUES (?, ?)
+		ON CONFLICT (repo, login) DO NOTHING
+	`, repo, login)
+	return err
+}
+
+// ReplaceCollaborators atomically replaces all collaborators for a repo.
+func (d *DB) ReplaceCollaborators(repo string, logins []string) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err = tx.Exec(`DELETE FROM collaborators WHERE repo = ?`, repo); err != nil {
+		return err
+	}
+	for _, login := range logins {
+		if _, err = tx.Exec(`INSERT INTO collaborators (repo, login) VALUES (?, ?)`, repo, login); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListDistinctRepos returns all distinct repository identifiers from pull_requests.
+func (d *DB) ListDistinctRepos() ([]string, error) {
+	rows, err := d.db.Query(`SELECT DISTINCT repo FROM pull_requests ORDER BY repo`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var repos []string
+	for rows.Next() {
+		var repo string
+		if err := rows.Scan(&repo); err != nil {
+			return nil, err
+		}
+		repos = append(repos, repo)
+	}
+	return repos, rows.Err()
 }
 
 // ── Check Runs ───────────────────────────────────────────────────────────────

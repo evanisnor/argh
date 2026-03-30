@@ -1413,6 +1413,272 @@ func TestScanLogins_ScanError(t *testing.T) {
 	}
 }
 
+// ── ListKnownLogins ───────────────────────────────────────────────────────────
+
+func TestListKnownLogins_CombinesAllSources(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-1", Repo: "owner/repo", Number: 1, Title: "PR 1",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo/pull/1",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-1", Login: "bob", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+	if err := db.InsertTimelineEvent(TimelineEvent{
+		PRID: "pr-1", EventType: "commit", Actor: "carol",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), PayloadJSON: "{}",
+	}); err != nil {
+		t.Fatalf("InsertTimelineEvent: %v", err)
+	}
+	if err := db.UpsertCollaborator("owner/repo", "dave"); err != nil {
+		t.Fatalf("UpsertCollaborator: %v", err)
+	}
+
+	got, err := db.ListKnownLogins("nobody")
+	if err != nil {
+		t.Fatalf("ListKnownLogins() error: %v", err)
+	}
+	want := []string{"alice", "bob", "carol", "dave"}
+	if len(got) != len(want) {
+		t.Fatalf("ListKnownLogins() = %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("ListKnownLogins()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestListKnownLogins_DeduplicatesAcrossTables(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-1", Repo: "owner/repo", Number: 1, Title: "PR 1",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo/pull/1",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+	// alice is both the PR author and a reviewer.
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-1", Login: "alice", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+	if err := db.InsertTimelineEvent(TimelineEvent{
+		PRID: "pr-1", EventType: "commit", Actor: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), PayloadJSON: "{}",
+	}); err != nil {
+		t.Fatalf("InsertTimelineEvent: %v", err)
+	}
+
+	got, err := db.ListKnownLogins("nobody")
+	if err != nil {
+		t.Fatalf("ListKnownLogins() error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "alice" {
+		t.Errorf("ListKnownLogins() = %v, want [alice]", got)
+	}
+}
+
+func TestListKnownLogins_ExcludesSpecifiedLogin(t *testing.T) {
+	db := openTestDB(t)
+
+	pr := PullRequest{
+		ID: "pr-1", Repo: "owner/repo", Number: 1, Title: "PR 1",
+		Status: "open", CIState: "none", Author: "alice",
+		CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+		LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo/pull/1",
+	}
+	if err := db.UpsertPullRequest(pr); err != nil {
+		t.Fatalf("UpsertPullRequest: %v", err)
+	}
+	if err := db.UpsertReviewer(Reviewer{PRID: "pr-1", Login: "bob", State: "APPROVED"}); err != nil {
+		t.Fatalf("UpsertReviewer: %v", err)
+	}
+
+	got, err := db.ListKnownLogins("alice")
+	if err != nil {
+		t.Fatalf("ListKnownLogins() error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "bob" {
+		t.Errorf("ListKnownLogins() = %v, want [bob]", got)
+	}
+}
+
+func TestListKnownLogins_EmptyDB(t *testing.T) {
+	db := openTestDB(t)
+	got, err := db.ListKnownLogins("me")
+	if err != nil {
+		t.Fatalf("ListKnownLogins() error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want empty list, got %v", got)
+	}
+}
+
+func TestListKnownLogins_QueryError(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, err := db.ListKnownLogins("me")
+	if err == nil {
+		t.Error("expected error from ListKnownLogins on closed DB")
+	}
+}
+
+// ── Collaborators ─────────────────────────────────────────────────────────────
+
+func TestReplaceCollaborators(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.ReplaceCollaborators("owner/repo", []string{"alice", "bob"}); err != nil {
+		t.Fatalf("ReplaceCollaborators: %v", err)
+	}
+
+	got, err := db.ListKnownLogins("nobody")
+	if err != nil {
+		t.Fatalf("ListKnownLogins: %v", err)
+	}
+	if len(got) != 2 || got[0] != "alice" || got[1] != "bob" {
+		t.Errorf("after insert: got %v, want [alice bob]", got)
+	}
+
+	// Replace with a different set.
+	if err := db.ReplaceCollaborators("owner/repo", []string{"carol"}); err != nil {
+		t.Fatalf("ReplaceCollaborators (second): %v", err)
+	}
+	got, err = db.ListKnownLogins("nobody")
+	if err != nil {
+		t.Fatalf("ListKnownLogins: %v", err)
+	}
+	if len(got) != 1 || got[0] != "carol" {
+		t.Errorf("after replace: got %v, want [carol]", got)
+	}
+}
+
+func TestReplaceCollaborators_QueryError(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	err := db.ReplaceCollaborators("owner/repo", []string{"alice"})
+	if err == nil {
+		t.Error("expected error from ReplaceCollaborators on closed DB")
+	}
+}
+
+func TestUpsertCollaborator_DuplicateIsNoOp(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.UpsertCollaborator("owner/repo", "alice"); err != nil {
+		t.Fatalf("first UpsertCollaborator: %v", err)
+	}
+	if err := db.UpsertCollaborator("owner/repo", "alice"); err != nil {
+		t.Fatalf("duplicate UpsertCollaborator should not error: %v", err)
+	}
+}
+
+func TestListDistinctRepos(t *testing.T) {
+	db := openTestDB(t)
+
+	// Empty table.
+	got, err := db.ListDistinctRepos()
+	if err != nil {
+		t.Fatalf("ListDistinctRepos empty: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty, got %v", got)
+	}
+
+	// Insert PRs into two repos.
+	for _, pr := range []PullRequest{
+		{ID: "pr-1", Repo: "owner/repo-a", Number: 1, Title: "A", Status: "open", CIState: "none", Author: "x",
+			CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+			LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo-a/pull/1"},
+		{ID: "pr-2", Repo: "owner/repo-b", Number: 1, Title: "B", Status: "open", CIState: "none", Author: "y",
+			CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+			LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo-b/pull/1"},
+		{ID: "pr-3", Repo: "owner/repo-a", Number: 2, Title: "C", Status: "open", CIState: "none", Author: "x",
+			CreatedAt: makeTime("2024-01-01T00:00:00Z"), UpdatedAt: makeTime("2024-01-01T00:00:00Z"),
+			LastActivityAt: makeTime("2024-01-01T00:00:00Z"), URL: "https://github.com/owner/repo-a/pull/2"},
+	} {
+		if err := db.UpsertPullRequest(pr); err != nil {
+			t.Fatalf("UpsertPullRequest(%s): %v", pr.ID, err)
+		}
+	}
+
+	got, err = db.ListDistinctRepos()
+	if err != nil {
+		t.Fatalf("ListDistinctRepos: %v", err)
+	}
+	want := []string{"owner/repo-a", "owner/repo-b"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestListDistinctRepos_QueryError(t *testing.T) {
+	db := openTestDB(t)
+	db.db.Close()
+	_, err := db.ListDistinctRepos()
+	if err == nil {
+		t.Error("expected error from ListDistinctRepos on closed DB")
+	}
+}
+
+func TestListDistinctRepos_ScanError(t *testing.T) {
+	db := openTestDB(t)
+	// Drop and recreate pull_requests with wrong schema to force scan error.
+	if _, err := db.db.Exec(`DROP TABLE pull_requests`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`CREATE TABLE pull_requests (repo INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`INSERT INTO pull_requests (repo) VALUES (NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := db.ListDistinctRepos()
+	if err == nil {
+		t.Error("expected scan error")
+	}
+}
+
+func TestReplaceCollaborators_DeleteError(t *testing.T) {
+	db := openTestDB(t)
+	// Drop the collaborators table to force the DELETE to fail.
+	if _, err := db.db.Exec(`DROP TABLE collaborators`); err != nil {
+		t.Fatal(err)
+	}
+	err := db.ReplaceCollaborators("owner/repo", []string{"alice"})
+	if err == nil {
+		t.Error("expected error when collaborators table is missing")
+	}
+}
+
+func TestReplaceCollaborators_InsertError(t *testing.T) {
+	db := openTestDB(t)
+	// Recreate with a constraint that will fail on insert.
+	if _, err := db.db.Exec(`DROP TABLE collaborators`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`CREATE TABLE collaborators (repo TEXT NOT NULL, login TEXT NOT NULL CHECK(length(login) > 0), PRIMARY KEY (repo, login))`); err != nil {
+		t.Fatal(err)
+	}
+	err := db.ReplaceCollaborators("owner/repo", []string{""})
+	if err == nil {
+		t.Error("expected error from insert constraint violation")
+	}
+}
+
 // ── ListPullRequestsByAuthor / ListPullRequestsNotByAuthor ────────────────────
 
 func TestListPullRequestsByAuthor(t *testing.T) {
