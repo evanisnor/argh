@@ -35,7 +35,7 @@ const (
 	AtomCIFail
 	AtomApproved
 	AtomAllThreadsResolved
-	AtomReadyForReview
+	AtomReady
 	AtomLabelAdded
 	AtomLabelRemoved
 	AtomStale
@@ -69,7 +69,7 @@ func (a *AtomNode) Evaluate(snapshot PRSnapshot) bool {
 		return snapshot.ApprovalCount >= n
 	case AtomAllThreadsResolved:
 		return snapshot.AllThreadsResolved
-	case AtomReadyForReview:
+	case AtomReady:
 		return snapshot.Status == "open"
 	case AtomLabelAdded:
 		for _, l := range snapshot.Labels {
@@ -205,8 +205,8 @@ func parseAtom(atom string) (*AtomNode, error) {
 	case atom == "all-threads-resolved":
 		return &AtomNode{Atom: Atom{Kind: AtomAllThreadsResolved}}, nil
 
-	case atom == "ready-for-review":
-		return &AtomNode{Atom: Atom{Kind: AtomReadyForReview}}, nil
+	case atom == "ready", atom == "open":
+		return &AtomNode{Atom: Atom{Kind: AtomReady}}, nil
 
 	case strings.HasPrefix(atom, "label-added:"):
 		name := strings.TrimPrefix(atom, "label-added:")

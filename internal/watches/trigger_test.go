@@ -93,18 +93,36 @@ func TestParseTrigger_AllAtoms(t *testing.T) {
 			snapshot: watches.PRSnapshot{AllThreadsResolved: false},
 			wantFire: false,
 		},
-		// ── ready-for-review ─────────────────────────────────────────────────────
+		// ── ready / open ─────────────────────────────────────────────────────────
 		{
-			name:     "ready-for-review fires when Status=open",
-			expr:     "on:ready-for-review",
+			name:     "on:ready fires when Status=open",
+			expr:     "on:ready",
 			snapshot: watches.PRSnapshot{Status: "open"},
 			wantFire: true,
 		},
 		{
-			name:     "ready-for-review does not fire when Status=draft",
-			expr:     "on:ready-for-review",
+			name:     "on:ready does not fire when Status=draft",
+			expr:     "on:ready",
 			snapshot: watches.PRSnapshot{Status: "draft"},
 			wantFire: false,
+		},
+		{
+			name:     "on:open fires when Status=open (alias for on:ready)",
+			expr:     "on:open",
+			snapshot: watches.PRSnapshot{Status: "open"},
+			wantFire: true,
+		},
+		{
+			name:     "on:open does not fire when Status=draft",
+			expr:     "on:open",
+			snapshot: watches.PRSnapshot{Status: "draft"},
+			wantFire: false,
+		},
+		{
+			name:       "on:ready-for-review is now unknown",
+			expr:       "on:ready-for-review",
+			wantErr:    true,
+			wantErrMsg: "unknown trigger atom",
 		},
 		// ── label-added ──────────────────────────────────────────────────────────
 		{
