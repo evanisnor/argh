@@ -684,6 +684,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// When the detail pane is open, q dismisses it instead of quitting.
+	if m.detailOpen {
+		switch msg.String() {
+		case "q":
+			m.detailOpen = false
+			return m, waitForDBEvent(m.eventCh)
+		}
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		if m.unsubscribe != nil {

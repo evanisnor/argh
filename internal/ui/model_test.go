@@ -1653,6 +1653,38 @@ func TestKey_CtrlCQuits(t *testing.T) {
 	}
 }
 
+// TestKey_Q_DismissesDetailPane verifies that pressing q while the detail pane
+// is open closes the detail pane instead of quitting the app.
+func TestKey_Q_DismissesDetailPane(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.detailOpen = true
+
+	m = applyMsg(m, keyRune('q'))
+
+	if m.detailOpen {
+		t.Error("expected detailOpen to be false after q")
+	}
+}
+
+// TestKey_CtrlC_QuitsEvenWithDetailOpen verifies ctrl+c still quits the app
+// even when the detail pane is open.
+func TestKey_CtrlC_QuitsEvenWithDetailOpen(t *testing.T) {
+	m, _ := newTestModel(newStub("myPRs", true), newStub("reviewQueue", true),
+		newStub("watches", false), newStub("detail", false), newStub("cmdBar", false))
+	m.detailOpen = true
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c should return a non-nil Cmd even with detail open")
+	}
+
+	result := cmd()
+	if _, ok := result.(tea.QuitMsg); !ok {
+		t.Errorf("cmd() returned %T, want tea.QuitMsg", result)
+	}
+}
+
 // ── keyboard navigation tests ─────────────────────────────────────────────────
 
 // keyRune builds a tea.KeyMsg for a printable rune.
