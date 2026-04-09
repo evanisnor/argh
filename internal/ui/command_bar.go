@@ -327,7 +327,8 @@ func computeSuggestions(val string, prRefs []PRRef, collaborators []string) (cbM
 	}
 
 	cmdPart := val[:spaceIdx]
-	argPart := strings.TrimSpace(val[spaceIdx+1:])
+	rawArgPart := val[spaceIdx+1:]
+	argPart := strings.TrimSpace(rawArgPart)
 
 	def := findCommandDef(cmdPart)
 	if def == nil {
@@ -335,22 +336,25 @@ func computeSuggestions(val string, prRefs []PRRef, collaborators []string) (cbM
 	}
 
 	// Check for collaborator mode: :request after a PR arg with "@" present.
+	// Use rawArgPart so a trailing space (appended by acceptTopSuggestion)
+	// is preserved in the prefix, preventing the accepted name from
+	// re-matching and trapping the user in an accept loop.
 	if def.needsCollaborator {
-		atIdx := strings.LastIndex(argPart, "@")
+		atIdx := strings.LastIndex(rawArgPart, "@")
 		if atIdx >= 0 {
-			prefix := argPart[atIdx+1:]
+			prefix := rawArgPart[atIdx+1:]
 			return cbModeCollaborator, def.signature, fuzzyFilterStrings(prefix, collaborators)
 		}
 	}
 
 	// Check for collaborator mode in :watch when the action token is "review".
 	if cmdPart == ":watch" {
-		atIdx := strings.LastIndex(argPart, "@")
+		atIdx := strings.LastIndex(rawArgPart, "@")
 		if atIdx >= 0 {
-			before := strings.TrimSpace(argPart[:atIdx])
+			before := strings.TrimSpace(rawArgPart[:atIdx])
 			for _, f := range strings.Fields(before) {
 				if f == "review" {
-					prefix := argPart[atIdx+1:]
+					prefix := rawArgPart[atIdx+1:]
 					return cbModeCollaborator, def.signature, fuzzyFilterStrings(prefix, collaborators)
 				}
 			}

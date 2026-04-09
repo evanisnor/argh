@@ -1172,6 +1172,70 @@ func TestCommandBar_WatchReviewCollaboratorFlow_EndToEnd(t *testing.T) {
 	}
 }
 
+// ── Collaborator accept-then-execute ─────────────────────────────────────────
+
+func TestCommandBar_CollaboratorAccept_ThenEnterExecutes(t *testing.T) {
+	cb := NewCommandBar()
+	disp := &stubDispatcher{}
+	cb.SetExecutor(disp)
+	cb.SetPRRefs(samplePRRefs())
+	cb.SetCollaborators([]string{"alice", "bob"})
+	focusBar(t, cb)
+
+	// Type a :request command with a collaborator that matches.
+	typeInto(t, cb, ":request a @alice")
+	if cb.mode != cbModeCollaborator {
+		t.Fatalf("expected collaborator mode, got %d", cb.mode)
+	}
+	if len(cb.suggestions) == 0 {
+		t.Fatal("expected suggestions before accept")
+	}
+
+	// Accept the suggestion — should add trailing space and clear suggestions.
+	pressKey(t, cb, "enter")
+	if len(cb.suggestions) != 0 {
+		t.Fatalf("expected no suggestions after accepting collaborator, got %v", cb.suggestions)
+	}
+
+	// Enter again — should execute the command, not loop.
+	pressKey(t, cb, "enter")
+	if !disp.called {
+		t.Fatal("expected executor to be called on second Enter")
+	}
+	if disp.cmd != "request" {
+		t.Errorf("cmd = %q, want %q", disp.cmd, "request")
+	}
+}
+
+func TestCommandBar_WatchReviewAccept_ThenEnterExecutes(t *testing.T) {
+	cb := NewCommandBar()
+	disp := &stubDispatcher{}
+	cb.SetExecutor(disp)
+	cb.SetPRRefs(samplePRRefs())
+	cb.SetCollaborators([]string{"alice", "bob"})
+	focusBar(t, cb)
+
+	typeInto(t, cb, ":watch a on:ready review @alice")
+	if cb.mode != cbModeCollaborator {
+		t.Fatalf("expected collaborator mode, got %d", cb.mode)
+	}
+
+	// Accept the suggestion.
+	pressKey(t, cb, "enter")
+	if len(cb.suggestions) != 0 {
+		t.Fatalf("expected no suggestions after accepting collaborator, got %v", cb.suggestions)
+	}
+
+	// Enter again — should execute.
+	pressKey(t, cb, "enter")
+	if !disp.called {
+		t.Fatal("expected executor to be called on second Enter")
+	}
+	if disp.cmd != "watch" {
+		t.Errorf("cmd = %q, want %q", disp.cmd, "watch")
+	}
+}
+
 // ── SetExecutor / executor dispatch ───────────────────────────────────────────
 
 type stubDispatcher struct {
