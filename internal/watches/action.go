@@ -12,6 +12,7 @@ const (
 	ActionMerge   ActionType = "merge"
 	ActionReady   ActionType = "ready"
 	ActionRequest ActionType = "request"
+	ActionReview  ActionType = "review"
 	ActionComment ActionType = "comment"
 	ActionLabel   ActionType = "label"
 	ActionNotify  ActionType = "notify"
@@ -20,10 +21,11 @@ const (
 // Action is a single watch action parsed from an action expression.
 type Action struct {
 	Type   ActionType
-	Method string // for merge: "squash", "merge", "rebase", or "" for repo default
-	User   string // for request: "@user" value
-	Text   string // for comment: the comment text
-	Name   string // for label: the label name
+	Method string   // for merge: "squash", "merge", "rebase", or "" for repo default
+	User   string   // for request: "@user" value
+	Users  []string // for review: multiple user values
+	Text   string   // for comment: the comment text
+	Name   string   // for label: the label name
 }
 
 // validMergeMethods lists the allowed merge method values.
@@ -82,6 +84,20 @@ func parseAction(token string) (Action, error) {
 			return Action{}, fmt.Errorf("user is required in %q", token)
 		}
 		return Action{Type: ActionRequest, User: user}, nil
+
+	case strings.HasPrefix(token, "review:"):
+		usersStr := strings.TrimPrefix(token, "review:")
+		if usersStr == "" {
+			return Action{}, fmt.Errorf("at least one user is required in %q", token)
+		}
+		users := strings.Split(usersStr, ",")
+		for i, u := range users {
+			users[i] = strings.TrimSpace(u)
+			if users[i] == "" {
+				return Action{}, fmt.Errorf("empty user in %q", token)
+			}
+		}
+		return Action{Type: ActionReview, Users: users}, nil
 
 	case strings.HasPrefix(token, "comment:"):
 		text := strings.TrimPrefix(token, "comment:")

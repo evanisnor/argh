@@ -675,6 +675,75 @@ func TestComputeSuggestions_CollaboratorMode(t *testing.T) {
 	}
 }
 
+func TestComputeSuggestions_WatchReviewCollaboratorMode(t *testing.T) {
+	refs := samplePRRefs()
+	collabs := []string{"alice", "bob", "charlie"}
+	mode, hint, suggestions := computeSuggestions(":watch #42 on:ready review @ali", refs, collabs)
+	if mode != cbModeCollaborator {
+		t.Errorf("expected cbModeCollaborator, got %d", mode)
+	}
+	if hint == "" {
+		t.Error("expected non-empty hint")
+	}
+	found := false
+	for _, s := range suggestions {
+		if s == "alice" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'alice' in suggestions %v", suggestions)
+	}
+}
+
+func TestComputeSuggestions_WatchReviewCollaboratorMode_EmptyPrefix(t *testing.T) {
+	refs := samplePRRefs()
+	collabs := []string{"alice", "bob"}
+	mode, _, suggestions := computeSuggestions(":watch #42 on:ready review @", refs, collabs)
+	if mode != cbModeCollaborator {
+		t.Errorf("expected cbModeCollaborator, got %d", mode)
+	}
+	if len(suggestions) != 2 {
+		t.Errorf("expected 2 collaborator suggestions, got %d: %v", len(suggestions), suggestions)
+	}
+}
+
+func TestComputeSuggestions_WatchReviewCollaboratorMode_SecondUser(t *testing.T) {
+	refs := samplePRRefs()
+	collabs := []string{"alice", "bob", "charlie"}
+	mode, _, suggestions := computeSuggestions(":watch #42 on:ready review @alice @b", refs, collabs)
+	if mode != cbModeCollaborator {
+		t.Errorf("expected cbModeCollaborator, got %d", mode)
+	}
+	found := false
+	for _, s := range suggestions {
+		if s == "bob" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'bob' in suggestions %v", suggestions)
+	}
+}
+
+func TestComputeSuggestions_WatchNonReviewAction_NoCollaboratorMode(t *testing.T) {
+	refs := samplePRRefs()
+	collabs := []string{"alice"}
+	mode, _, _ := computeSuggestions(":watch #42 on:ready merge @", refs, collabs)
+	if mode == cbModeCollaborator {
+		t.Error("merge action should not trigger collaborator mode")
+	}
+}
+
+func TestComputeSuggestions_WatchWithoutAt_PRMode(t *testing.T) {
+	refs := samplePRRefs()
+	collabs := []string{"alice"}
+	mode, _, _ := computeSuggestions(":watch a", refs, collabs)
+	if mode != cbModePR {
+		t.Errorf("expected cbModePR when no @ present, got %d", mode)
+	}
+}
+
 func TestComputeSuggestions_RequestWithoutAt(t *testing.T) {
 	refs := samplePRRefs()
 	collabs := []string{"alice"}
@@ -1057,6 +1126,49 @@ func TestCommandBar_CollaboratorFlow_EndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(sv, "alice") {
 		t.Errorf("step5: expected 'alice' in SuggestionsView(), got %q", sv)
+	}
+}
+
+// ── End-to-end watch review collaborator flow ────────────────────────────────
+
+func TestCommandBar_WatchReviewCollaboratorFlow_EndToEnd(t *testing.T) {
+	cb := NewCommandBar()
+	cb.SetPRRefs(samplePRRefs())
+	cb.SetCollaborators([]string{"alice", "bob", "charlie"})
+	focusBar(t, cb)
+
+	// Type ":watch" and accept via tab.
+	typeInto(t, cb, ":watch")
+	pressKey(t, cb, "tab")
+	if !strings.HasPrefix(cb.Value(), ":watch ") {
+		t.Fatalf("expected ':watch ' after tab, got %q", cb.Value())
+	}
+
+	// Accept PR suggestion.
+	pressKey(t, cb, "enter")
+
+	// Type trigger and review keyword, then @.
+	typeInto(t, cb, "on:ready review @")
+
+	if cb.mode != cbModeCollaborator {
+		t.Fatalf("expected collaborator mode, got %d", cb.mode)
+	}
+	if len(cb.suggestions) != 3 {
+		t.Fatalf("expected 3 collaborator suggestions, got %d: %v", len(cb.suggestions), cb.suggestions)
+	}
+
+	// Filter and accept a collaborator.
+	typeInto(t, cb, "al")
+	pressKey(t, cb, "tab")
+
+	if !strings.Contains(cb.Value(), "@alice") {
+		t.Errorf("expected @alice in value, got %q", cb.Value())
+	}
+
+	// Type another @ for second reviewer.
+	typeInto(t, cb, "@")
+	if cb.mode != cbModeCollaborator {
+		t.Fatalf("expected collaborator mode for second @, got %d", cb.mode)
 	}
 }
 

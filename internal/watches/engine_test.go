@@ -746,6 +746,41 @@ func TestEngine_ExecuteAction_Request(t *testing.T) {
 	}
 }
 
+func TestEngine_ExecuteAction_Review(t *testing.T) {
+	w := testWatch()
+	w.ActionExpr = "review:alice,bob"
+
+	executor := &fakeActionExecutor{}
+	eng, _, _, _ := engineFor(t, w, executor, nil)
+	eng.evaluateWatchesForPR(context.Background(), testPR())
+
+	if !executor.requestCalled {
+		t.Fatal("RequestReview should have been called")
+	}
+	if len(executor.lastRequestedUsers) != 2 {
+		t.Fatalf("expected 2 users, got %v", executor.lastRequestedUsers)
+	}
+	if executor.lastRequestedUsers[0] != "alice" || executor.lastRequestedUsers[1] != "bob" {
+		t.Errorf("requested users = %v, want [alice bob]", executor.lastRequestedUsers)
+	}
+}
+
+func TestEngine_ExecuteAction_Review_StripsAtPrefix(t *testing.T) {
+	w := testWatch()
+	w.ActionExpr = "review:@alice,@bob"
+
+	executor := &fakeActionExecutor{}
+	eng, _, _, _ := engineFor(t, w, executor, nil)
+	eng.evaluateWatchesForPR(context.Background(), testPR())
+
+	if !executor.requestCalled {
+		t.Fatal("RequestReview should have been called")
+	}
+	if executor.lastRequestedUsers[0] != "alice" || executor.lastRequestedUsers[1] != "bob" {
+		t.Errorf("@ prefix should be stripped: got %v", executor.lastRequestedUsers)
+	}
+}
+
 func TestEngine_ExecuteAction_Comment(t *testing.T) {
 	w := testWatch()
 	w.ActionExpr = "comment:LGTM!"

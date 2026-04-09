@@ -564,7 +564,7 @@ func (e *CommandExecutor) execWatch(args []string) tea.Cmd {
 			return WatchChangedMsg{Status: fmt.Sprintf("watch %s cancelled", id)}
 		}
 	default:
-		// :watch [#pr] <trigger> <action>
+		// :watch [#pr] <trigger> <action> [@user...]
 		if len(args) < 3 {
 			return func() tea.Msg {
 				return CommandResultMsg{Err: fmt.Errorf(":watch: usage: :watch [#pr] <trigger> <action>")}
@@ -577,6 +577,22 @@ func (e *CommandExecutor) execWatch(args []string) tea.Cmd {
 			}
 			trigger := args[1]
 			action := args[2]
+
+			// For "review" action, collect @user args and build the expression.
+			if action == "review" {
+				var users []string
+				for _, a := range args[3:] {
+					u := strings.TrimPrefix(a, "@")
+					if u != "" {
+						users = append(users, u)
+					}
+				}
+				if len(users) == 0 {
+					return CommandResultMsg{Err: fmt.Errorf(":watch: review action requires at least one @user")}
+				}
+				action = "review:" + strings.Join(users, ",")
+			}
+
 			if err := e.watches.AddWatch(pr.Repo, pr.Number, pr.URL, trigger, action); err != nil {
 				return CommandResultMsg{Err: err}
 			}

@@ -213,6 +213,12 @@ func (e *Engine) executeAction(ctx context.Context, action Action, pr persistenc
 	case ActionRequest:
 		user := strings.TrimPrefix(action.User, "@")
 		return e.executor.RequestReview(ctx, pr.Repo, pr.Number, []string{user})
+	case ActionReview:
+		users := make([]string, len(action.Users))
+		for i, u := range action.Users {
+			users[i] = strings.TrimPrefix(u, "@")
+		}
+		return e.executor.RequestReview(ctx, pr.Repo, pr.Number, users)
 	case ActionComment:
 		return e.executor.PostComment(ctx, pr.Repo, pr.Number, action.Text)
 	case ActionLabel:

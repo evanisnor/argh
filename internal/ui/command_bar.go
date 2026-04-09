@@ -40,7 +40,7 @@ var commandList = []commandDef{
 	{name: ":ready", signature: ":ready [#pr]", needsPR: true},
 	{name: ":draft", signature: ":draft [#pr]", needsPR: true},
 	{name: ":merge", signature: ":merge [#pr]", needsPR: true},
-	{name: ":watch", signature: ":watch [#pr] <trigger> <action>", needsPR: true},
+	{name: ":watch", signature: ":watch [#pr] <trigger> <action> [@user...]", needsPR: true},
 	{name: ":close", signature: ":close [#pr]", needsPR: true},
 	{name: ":reopen", signature: ":reopen [#pr]", needsPR: true},
 	{name: ":label", signature: ":label [#pr] [label]", needsPR: true},
@@ -340,6 +340,20 @@ func computeSuggestions(val string, prRefs []PRRef, collaborators []string) (cbM
 		if atIdx >= 0 {
 			prefix := argPart[atIdx+1:]
 			return cbModeCollaborator, def.signature, fuzzyFilterStrings(prefix, collaborators)
+		}
+	}
+
+	// Check for collaborator mode in :watch when the action token is "review".
+	if cmdPart == ":watch" {
+		atIdx := strings.LastIndex(argPart, "@")
+		if atIdx >= 0 {
+			before := strings.TrimSpace(argPart[:atIdx])
+			for _, f := range strings.Fields(before) {
+				if f == "review" {
+					prefix := argPart[atIdx+1:]
+					return cbModeCollaborator, def.signature, fuzzyFilterStrings(prefix, collaborators)
+				}
+			}
 		}
 	}
 

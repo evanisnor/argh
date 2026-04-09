@@ -43,6 +43,16 @@ func TestParseActions(t *testing.T) {
 			want: []Action{{Type: ActionRequest, User: "@alice"}},
 		},
 		{
+			name: "review single user",
+			expr: "review:alice",
+			want: []Action{{Type: ActionReview, Users: []string{"alice"}}},
+		},
+		{
+			name: "review multiple users",
+			expr: "review:alice,bob,carol",
+			want: []Action{{Type: ActionReview, Users: []string{"alice", "bob", "carol"}}},
+		},
+		{
 			name: "comment with text",
 			expr: "comment:this is text",
 			want: []Action{{Type: ActionComment, Text: "this is text"}},
@@ -93,6 +103,14 @@ func TestParseActions(t *testing.T) {
 			},
 		},
 		{
+			name: "review plus notify",
+			expr: "review:alice,bob + notify",
+			want: []Action{
+				{Type: ActionReview, Users: []string{"alice", "bob"}},
+				{Type: ActionNotify},
+			},
+		},
+		{
 			name: "label plus notify",
 			expr: "label:wip + notify",
 			want: []Action{
@@ -127,6 +145,16 @@ func TestParseActions(t *testing.T) {
 		{
 			name:    "request without user",
 			expr:    "request:",
+			wantErr: true,
+		},
+		{
+			name:    "review without users",
+			expr:    "review:",
+			wantErr: true,
+		},
+		{
+			name:    "review with empty user segment",
+			expr:    "review:alice,,bob",
 			wantErr: true,
 		},
 		{
@@ -174,6 +202,15 @@ func TestParseActions(t *testing.T) {
 				}
 				if a.Name != w.Name {
 					t.Errorf("action[%d].Name = %q, want %q", i, a.Name, w.Name)
+				}
+				if len(a.Users) != len(w.Users) {
+					t.Errorf("action[%d].Users = %v, want %v", i, a.Users, w.Users)
+				} else {
+					for j := range a.Users {
+						if a.Users[j] != w.Users[j] {
+							t.Errorf("action[%d].Users[%d] = %q, want %q", i, j, a.Users[j], w.Users[j])
+						}
+					}
 				}
 			}
 		})

@@ -164,11 +164,15 @@ type fakeWatchEngine struct {
 	cancelCalled bool
 
 	lastCancelID string
+	lastTrigger  string
+	lastAction   string
 	watches      []persistence.Watch
 }
 
-func (f *fakeWatchEngine) AddWatch(_ string, _ int, _ string, _, _ string) error {
+func (f *fakeWatchEngine) AddWatch(_ string, _ int, _ string, trigger, action string) error {
 	f.addCalled = true
+	f.lastTrigger = trigger
+	f.lastAction = action
 	return f.addWatchErr
 }
 
@@ -1270,6 +1274,68 @@ func TestExecute_Watch_Error(t *testing.T) {
 	r := msg.(CommandResultMsg)
 	if r.Err == nil {
 		t.Error("expected error from AddWatch")
+	}
+}
+
+func TestExecute_Watch_ReviewWithUsers(t *testing.T) {
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ready", "review", "@alice", "@bob"}))
+	r, ok := msg.(WatchChangedMsg)
+	if !ok {
+		t.Fatalf("expected WatchChangedMsg, got %T: %v", msg, msg)
+	}
+	if r.Status == "" {
+		t.Error("expected non-empty status")
+	}
+	if !we.addCalled {
+		t.Error("AddWatch should have been called")
+	}
+	if we.lastAction != "review:alice,bob" {
+		t.Errorf("expected action 'review:alice,bob', got %q", we.lastAction)
+	}
+}
+
+func TestExecute_Watch_ReviewNoUsers(t *testing.T) {
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ready", "review"}))
+	r, ok := msg.(CommandResultMsg)
+	if !ok {
+		t.Fatalf("expected CommandResultMsg, got %T", msg)
+	}
+	if r.Err == nil {
+		t.Error("expected error when review has no @users")
+	}
+}
+
+func TestExecute_Watch_ReviewStripsAtPrefix(t *testing.T) {
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ready", "review", "@alice"}))
+	_, ok := msg.(WatchChangedMsg)
+	if !ok {
+		t.Fatalf("expected WatchChangedMsg, got %T", msg)
+	}
+	if we.lastAction != "review:alice" {
+		t.Errorf("expected action 'review:alice', got %q", we.lastAction)
+	}
+}
+
+func TestExecute_Watch_NonReviewActionIgnoresExtraArgs(t *testing.T) {
+	we := &fakeWatchEngine{}
+	store := &fakePRStore{prs: samplePRs(), sessionIDs: sampleSessionIDs()}
+	exec := NewCommandExecutor(CommandExecutorConfig{Watches: we, Store: store})
+	msg := runCmd(t, exec.Execute("watch", []string{"a", "on:ci-pass", "merge"}))
+	_, ok := msg.(WatchChangedMsg)
+	if !ok {
+		t.Fatalf("expected WatchChangedMsg, got %T", msg)
+	}
+	if we.lastAction != "merge" {
+		t.Errorf("expected action 'merge', got %q", we.lastAction)
 	}
 }
 
